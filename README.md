@@ -115,6 +115,6 @@ services:
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，由Perplexity AI除虫。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释。
 
 

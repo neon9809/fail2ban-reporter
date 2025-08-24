@@ -115,6 +115,6 @@ services:
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，由Perplexity AI除虫。
 
 

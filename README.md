@@ -52,8 +52,8 @@
 ### 直接 docker run
 ```bash
 # 只读挂载 fail2ban.log 到容器
-sudo docker run -d --name f2b-reporter \
-  -v /var/log/fail2ban.log:/var/log/fail2ban.log:ro \
+docker run -d --name f2b-reporter \
+  -v /var/log/fail2ban.log:/var/log/fail2ban.log:ro \ # Linux默认fail2ban日志位置
   -e INTERVAL=3h5m \
   -e MAIL_PROVIDER=resend \
   -e RESEND_API_KEY=re_xxx \
@@ -61,14 +61,29 @@ sudo docker run -d --name f2b-reporter \
   -e MAIL_TO=admin@domain.com,sec@domain.com \
   -e SUBJECT_PREFIX="[Fail2Ban]" \
   -e TZ=Asia/Shanghai \
-  ghcr.io/<your-repo-owner>/<your-repo-name>:latest
+  ghcr.io/neon9809/fail2ban-reporter:latest
+```
+
+### Apple Container
+```bash
+# 只读挂载 fail2ban.log 到容器
+container run -d --name f2b-reporter \
+  -v /var/log/fail2ban.log:/var/log/fail2ban.log:ro \ # 结合实际情况修改日志位置
+  -e INTERVAL=3h5m \ 
+  -e MAIL_PROVIDER=resend \
+  -e RESEND_API_KEY=re_xxx \
+  -e RESEND_FROM=no-reply@yourdomain.com \
+  -e MAIL_TO=admin@domain.com,sec@domain.com \
+  -e SUBJECT_PREFIX="[Fail2Ban]" \
+  -e TZ=Asia/Shanghai \
+  ghcr.io/neon9809/fail2ban-reporter:latest
 ```
 
 ### docker-compose.yml（可选）
 ```yaml
 services:
   f2b-reporter:
-    image: ghcr.io/<your-repo-owner>/<your-repo-name>:latest
+    image: ghcr.io/neon9809/fail2ban-reporter:latest
     container_name: f2b-reporter
     environment:
       LOG_PATH: /var/log/fail2ban.log

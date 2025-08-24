@@ -6,7 +6,8 @@ import ssl
 import json
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Counter
+from collections import Counter as _Counter
 
 try:
     import requests
@@ -58,22 +59,21 @@ def parse_interval(s: str) -> timedelta:
     return timedelta(hours=h, minutes=m_, seconds=s_)
 
 
-def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[str], List[str], int, Dict[str, int], Dict[str, int]]:
+def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
     """
-    Returns: ban_ips, unban_ips, fails_count, ban_counts, unban_counts within [start, end].
+    Returns: ban_ips_list, unban_ips_list, found_ips_list, fails_count within [start, end].
+    found_ips_list contains one entry per 'Found' line with the offending IP.
     """
     ban_ips: List[str] = []
     unban_ips: List[str] = []
+    found_ips: List[str] = []
     fails = 0
-    ban_counts: Dict[str, int] = {}
-    unban_counts: Dict[str, int] = {}
 
     if not os.path.exists(path):
-        return ban_ips, unban_ips, fails, ban_counts, unban_counts
+        return ban_ips, unban_ips, found_ips, fails
 
     with open(path, "r", errors="ignore") as f:
         for line in f:
-            # Timestamp like: 2025-08-24 10:20:14,123 ...
             ts_match = TS_RE.match(line)
             if not ts_match:
                 continue
@@ -81,7 +81,6 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
             try:
                 ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
             except ValueError:
-                # Try with milliseconds trimmed
                 try:
                     ts = datetime.fromisoformat(ts_str)
                 except Exception:
@@ -90,23 +89,30 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
             if not (start <= ts <= end):
                 continue
 
-            if BAN_RE.search(line):
-                ip = BAN_RE.search(line).group(1)
+            if (m := BAN_RE.search(line)):
+                ip = m.group(1)
                 ban_ips.append(ip)
-                ban_counts[ip] = ban_counts.get(ip, 0) + 1
-            elif UNBAN_RE.search(line):
-                ip = UNBAN_RE.search(line).group(1)
+            elif (m := UNBAN_RE.search(line)):
+                ip = m.group(1)
                 unban_ips.append(ip)
-                unban_counts[ip] = unban_counts.get(ip, 0) + 1
             elif FOUND_RE.search(line):
+                # extract IP after 'Found' keyword if present
+                parts = line.split()
+                for idx, w in enumerate(parts):
+                    if w == "Found" and idx + 1 < len(parts):
+                        found_ips.append(parts[idx + 1])
+                        break
                 fails += 1
 
-    return ban_ips, unban_ips, fails, ban_counts, unban_counts
+    return ban_ips, unban_ips, found_ips, fails
 
 
-def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: List[str], fails: int, ban_counts: Dict[str, int], unban_counts: Dict[str, int]) -> str:
+def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: List[str], found_ips: List[str], fails: int) -> str:
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
+    # Top 5 IPs by Found occurrences
+    top_fails = _Counter(found_ips).most_common(5)
+
     lines = []
     lines.append(f"时间窗口: {start} ~ {end}")
     lines.append("")
@@ -116,15 +122,21 @@ def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: 
     lines.append("")
 
     if uniq_ban:
-        lines.append("Ban IP 列表 (含计数):")
+        lines.append("Ban 掉 IP 列表:")
         for ip in uniq_ban:
-            lines.append(f"  - {ip} (x{ban_counts.get(ip, 1)})")
+            lines.append(f"  - {ip}")
         lines.append("")
 
     if uniq_unban:
-        lines.append("Unban IP 列表 (含计数):")
+        lines.append("Unban IP 列表:")
         for ip in uniq_unban:
-            lines.append(f"  - {ip} (x{unban_counts.get(ip, 1)})")
+            lines.append(f"  - {ip}")
+        lines.append("")
+
+    if top_fails:
+        lines.append("失败尝试次数最多的5个IP地址:")
+        for ip, cnt in top_fails:
+            lines.append(f"  - {ip} (x{cnt})")
         lines.append("")
 
     return "\n".join(lines)
@@ -180,8 +192,8 @@ def send_mail_resend(subject: str, body: str):
 
 def run_once(now: datetime, interval: timedelta):
     start = now - interval
-    ban_ips, unban_ips, fails, ban_counts, unban_counts = parse_log_window(LOG_PATH, start, now)
-    report = build_report(start, now, ban_ips, unban_ips, fails, ban_counts, unban_counts)
+    ban_ips, unban_ips, found_ips, fails = parse_log_window(LOG_PATH, start, now)
+    report = build_report(start, now, ban_ips, unban_ips, found_ips, fails)
     subject = f"{SUBJECT_PREFIX} Fail2Ban 报告 {now.strftime('%Y-%m-%d %H:%M:%S')}"
 
     print("\n=== Report Begin ===\n" + report + "\n=== Report End ===\n")
@@ -200,7 +212,6 @@ def main():
     print(f"[INFO] INTERVAL={interval}")
     print(f"[INFO] MAIL_PROVIDER={MAIL_PROVIDER}")
 
-    # 初次启动：立即对过去一个 INTERVAL 的窗口跑一次
     while True:
         now = datetime.now()
         try:

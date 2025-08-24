@@ -15,6 +15,8 @@ USER app
 ENV LOG_PATH=/var/log/fail2ban.log \
     INTERVAL=1h \
     MAIL_PROVIDER=smtp \
-    TZ=UTC
+    TZ=UTC \
+    PYTHONUNBUFFERED=1 \
+    PYTHONIOENCODING=utf-8
 
 CMD ["python", "/app/main.py"]

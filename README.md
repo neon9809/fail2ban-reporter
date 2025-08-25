@@ -26,7 +26,8 @@
 | `MAIL_PROVIDER` | `smtp` / `resend` | 邮件发送方式 |
 | `MAIL_TO` | `admin@domain.com,sec@domain.com` | 收件人，逗号分隔 |
 | `SUBJECT_PREFIX` | `[Fail2Ban]` | 主题前缀，可选 |
-| `TZ` | `Asia/Shanghai` | 容器时区（可选，默认UTC）|
+| `TZ` | `Asia/Shanghai` | 容器时区（可选）|
+| `TOP_N` | `5` | 报告失败尝试次数最多的IP地址数量 默认报告失败尝试次数最多的5个IP地址（可选）|
 
 **SMTP 模式**
 | 变量 | 示例 | 说明 |

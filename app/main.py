@@ -19,6 +19,7 @@ INTERVAL_STR = os.getenv("INTERVAL", "1h")
 MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "smtp").lower()
 MAIL_TO = [x.strip() for x in os.getenv("MAIL_TO", "").split(",") if x.strip()]
 SUBJECT_PREFIX = os.getenv("SUBJECT_PREFIX", "[Fail2Ban]")
+TOP_N = int(os.getenv("TOP_N", "5"))
 
 # SMTP config
 SMTP_HOST = os.getenv("SMTP_HOST", "")
@@ -107,11 +108,16 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
     return ban_ips, unban_ips, found_ips, fails
 
 
-def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: List[str], found_ips: List[str], fails: int) -> str:
+def build_report(start: datetime, end: datetime,
+                 ban_ips: List[str],
+                 unban_ips: List[str],
+                 found_ips: List[str],
+                 fails: int,
+                 top_n: int) -> str:
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
-    # Top 5 IPs by Found occurrences
-    top_fails = _Counter(found_ips).most_common(5)
+    # Top N IPs by Found occurrences
+    top_fails = _Counter(found_ips).most_common(top_n)
 
     lines = []
     lines.append(f"时间窗口: {start} ~ {end}")
@@ -138,7 +144,7 @@ def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: 
     lines.append("")
 
     if top_fails:
-        lines.append("失败尝试次数最多的5个IP地址:")
+        lines.append(f"失败尝试次数最多的{top_n}个IP地址:")
         for ip, cnt in top_fails:
             lines.append(f"  - {ip} (x{cnt})")
         lines.append("")

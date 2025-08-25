@@ -203,7 +203,7 @@ def send_mail_resend(subject: str, body: str):
 def run_once(now: datetime, interval: timedelta):
     start = now - interval
     ban_ips, unban_ips, found_ips, fails = parse_log_window(LOG_PATH, start, now)
-    report = build_report(start, now, ban_ips, unban_ips, found_ips, fails)
+    report = build_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
     subject = f"{SUBJECT_PREFIX} Fail2Ban 报告 {now.strftime('%Y-%m-%d %H:%M:%S')}"
 
     print("\n=== Report Begin ===\n" + report + "\n=== Report End ===\n")

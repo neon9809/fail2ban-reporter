@@ -116,7 +116,7 @@ def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: 
     lines = []
     lines.append(f"时间窗口: {start} ~ {end}")
     lines.append("")
-    lines.append(f"Ban 掉 IP 数量: {len(uniq_ban)}")
+    lines.append(f"Ban IP 数量: {len(uniq_ban)}")
     lines.append(f"Unban IP 数量: {len(uniq_unban)}")
     lines.append(f"失败尝试次数(Found): {fails}")
     lines.append("")

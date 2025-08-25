@@ -26,7 +26,7 @@
 | `MAIL_PROVIDER` | `smtp` / `resend` | 邮件发送方式 |
 | `MAIL_TO` | `admin@domain.com,sec@domain.com` | 收件人，逗号分隔 |
 | `SUBJECT_PREFIX` | `[Fail2Ban]` | 主题前缀，可选 |
-| `TZ` | `Asia/Shanghai` | 容器时区（可选）|
+| `TZ` | `Asia/Shanghai` | 容器时区（可选，默认UTC）|
 
 **SMTP 模式**
 | 变量 | 示例 | 说明 |
@@ -48,6 +48,7 @@
 
 
 ## 本地/服务器运行
+### ⚠️记得打开目录文件`/var/log/fail2ban.log`的读取权限
 
 ### 直接 docker run
 ```bash

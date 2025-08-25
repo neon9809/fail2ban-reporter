@@ -121,17 +121,21 @@ def build_report(start: datetime, end: datetime, ban_ips: List[str], unban_ips: 
     lines.append(f"失败尝试次数(Found): {fails}")
     lines.append("")
 
+    lines.append("Ban IP list:")
     if uniq_ban:
-        lines.append("Ban 掉 IP 列表:")
         for ip in uniq_ban:
             lines.append(f"  - {ip}")
-        lines.append("")
+    else:
+        lines.append("  - (无)")
+    lines.append("")
 
+    lines.append("Unban IP list:")
     if uniq_unban:
-        lines.append("Unban IP 列表:")
         for ip in uniq_unban:
             lines.append(f"  - {ip}")
-        lines.append("")
+    else:
+        lines.append("  - (无)")
+    lines.append("")
 
     if top_fails:
         lines.append("失败尝试次数最多的5个IP地址:")

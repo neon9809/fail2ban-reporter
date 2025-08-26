@@ -195,13 +195,14 @@ def build_html_report(start: datetime, end: datetime,
     ban_ips_str = "; ".join(uniq_ban[:10]) + ("..." if len(uniq_ban) > 10 else "")
     unban_ips_str = "; ".join(uniq_unban[:10]) + ("..." if len(uniq_unban) > 10 else "")
     
-    # Format top fail IPs
+    # Format top fail IPs and counts with line breaks
     if top_fails:
-        top_fail_ips_str = "; ".join([f"{ip}({cnt})" for ip, cnt in top_fails])
-        top_fail_count = top_fails[0][1] if top_fails else 0
+        # 每行一个 count 和对应 IP
+        counts_html = "<br/>".join(str(cnt) for _, cnt in top_fails)
+        ips_html    = "<br/>".join(ip       for ip, _ in top_fails)
     else:
-        top_fail_ips_str = "无"
-        top_fail_count = 0
+        counts_html = "无"
+        ips_html    = "无"
     
     # Use Template class for safe substitution
     template_obj = Template(template_content)
@@ -217,8 +218,8 @@ def build_html_report(start: datetime, end: datetime,
         fail_count=len(uniq_fails),
         ban_ips=ban_ips_str if ban_ips_str else "无",
         unban_ips=unban_ips_str if unban_ips_str else "无",
-        top_fail_count=top_fail_count,
-        top_fail_ips=top_fail_ips_str
+        top_fail_count=counts_html,
+        top_fail_ips=ips_html
     )
     
     return html_content

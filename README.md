@@ -10,7 +10,7 @@
   - `Ban` 了多少个 IP（及 IP 列表）
   - `Unban` 了多少个 IP（及 IP 列表）
   - **失败尝试**（按 fail2ban 日志中的 `Found` 事件计数）
-- 报告以纯文本邮件发送（可选 SMTP 或 Resend）。
+- 报告以HTML邮件发送（可选 SMTP 或 Resend）。
 - 容器里自动循环运行，无需外部 Cron。
 - 多架构构建：`linux/amd64, linux/arm64`。
 
@@ -28,6 +28,8 @@
 | `SUBJECT_PREFIX` | `[Fail2Ban]` | 主题前缀，可选 |
 | `TZ` | `Asia/Shanghai` | 容器时区（可选）|
 | `TOP_N` | `5` | 报告失败尝试次数最多的IP地址数量 默认报告失败尝试次数最多的5个IP地址（可选）|
+
+**[邮件内容样式](https://github.com/neon9809/fail2ban-reporter/blob/main/app/report-template.html)**
 
 **SMTP 模式**
 | 变量 | 示例 | 说明 |
@@ -117,6 +119,6 @@ services:
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释, 在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。
 
 

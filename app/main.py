@@ -6,8 +6,9 @@ import ssl
 import json
 from datetime import datetime, timedelta, timezone
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from typing import List, Tuple, Dict, Counter
-from collections import Counter as _Counter
+from collections import Counter
 
 try:
     import requests
@@ -43,17 +44,17 @@ if tz := os.getenv("TZ"):
 
 # Regexes
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
-BAN_RE = re.compile(r"\bBan\s+([^\s]+)")
-UNBAN_RE = re.compile(r"\bUnban\s+([^\s]+)")
-FOUND_RE = re.compile(r"\bFound\b")
+BAN_RE = re.compile(r"Ban\s+([^\s]+)")
+UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
+FOUND_RE = re.compile(r"Found\b")
 
-INTERVAL_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
+INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
 def parse_interval(s: str) -> timedelta:
     m = INTERVAL_RE.match(s.strip())
     if not m or (not m.group("h") and not m.group("m") and not m.group("s")):
-        raise ValueError(f"Invalid INTERVAL: '{s}'. Use forms like '3h5m', '15m', '45s'.")
+        raise ValueError(f"Invalid INTERVAL: '{s}'. Use forms like '30m', '15m', '45s'.")
     h = int(m.group("h") or 0)
     m_ = int(m.group("m") or 0)
     s_ = int(m.group("s") or 0)
@@ -90,10 +91,10 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
             if not (start <= ts <= end):
                 continue
 
-            if (m := BAN_RE.search(line)):
+            if m := BAN_RE.search(line):
                 ip = m.group(1)
                 ban_ips.append(ip)
-            elif (m := UNBAN_RE.search(line)):
+            elif m := UNBAN_RE.search(line):
                 ip = m.group(1)
                 unban_ips.append(ip)
             elif FOUND_RE.search(line):
@@ -109,25 +110,26 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
 
 
 def build_report(start: datetime, end: datetime,
-                 ban_ips: List[str],
-                 unban_ips: List[str],
-                 found_ips: List[str],
-                 fails: int,
-                 top_n: int) -> str:
+                ban_ips: List[str],
+                unban_ips: List[str],
+                found_ips: List[str],
+                fails: int,
+                top_n: int) -> str:
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
+    uniq_fails = sorted(set(found_ips))
     # Top N IPs by Found occurrences
-    top_fails = _Counter(found_ips).most_common(top_n)
+    top_fails = Counter(found_ips).most_common(top_n)
 
     lines = []
-    lines.append(f"时间窗口: {start} ~ {end}")
+    lines.append(f"时间范围: {start} - {end}")
     lines.append("")
     lines.append(f"Ban IP 数量: {len(uniq_ban)}")
     lines.append(f"Unban IP 数量: {len(uniq_unban)}")
     lines.append(f"失败尝试次数(Found): {fails}")
     lines.append("")
 
-    lines.append("Ban IP list:")
+    lines.append("Ban IP List:")
     if uniq_ban:
         for ip in uniq_ban:
             lines.append(f"  - {ip}")
@@ -135,7 +137,7 @@ def build_report(start: datetime, end: datetime,
         lines.append("  - (无)")
     lines.append("")
 
-    lines.append("Unban IP list:")
+    lines.append("Unban IP List:")
     if uniq_unban:
         for ip in uniq_unban:
             lines.append(f"  - {ip}")
@@ -144,22 +146,97 @@ def build_report(start: datetime, end: datetime,
     lines.append("")
 
     if top_fails:
-        lines.append(f"失败尝试次数最多的{top_n}个IP地址:")
+        lines.append(f"失败尝试次数最多的{top_n}个IP:")
         for ip, cnt in top_fails:
-            lines.append(f"  - {ip} (x{cnt})")
-        lines.append("")
+            lines.append(f"  - {ip} ({cnt})")
+    lines.append("")
 
     return "\n".join(lines)
 
 
-def send_mail_smtp(subject: str, body: str):
+def build_html_report(start: datetime, end: datetime,
+                     ban_ips: List[str],
+                     unban_ips: List[str],
+                     found_ips: List[str],
+                     fails: int,
+                     top_n: int) -> str:
+    """
+    Build HTML report using the template file
+    """
+    uniq_ban = sorted(set(ban_ips))
+    uniq_unban = sorted(set(unban_ips))
+    uniq_fails = sorted(set(found_ips))
+    # Top N IPs by Found occurrences
+    top_fails = Counter(found_ips).most_common(top_n)
+    
+    # Read HTML template
+    template_path = os.path.join(os.path.dirname(__file__), "report-template.html")
+    try:
+        with open(template_path, "r", encoding="utf-8") as f:
+            template = f.read()
+    except FileNotFoundError:
+        # Fallback to simple HTML if template not found
+        return f"""
+        <html>
+        <body>
+        <h1>{SUBJECT_PREFIX} IP拦截报告</h1>
+        <p>时间范围: {start} - {end}</p>
+        <p>Ban IP 数量: {len(uniq_ban)}</p>
+        <p>Unban IP 数量: {len(uniq_unban)}</p>
+        <p>失败尝试计数: {len(uniq_fails)}</p>
+        </body>
+        </html>
+        """
+    
+    # Format IP lists for display
+    ban_ips_str = "; ".join(uniq_ban[:10]) + ("..." if len(uniq_ban) > 10 else "")
+    unban_ips_str = "; ".join(uniq_unban[:10]) + ("..." if len(uniq_unban) > 10 else "")
+    
+    # Format top fail IPs
+    if top_fails:
+        top_fail_ips_str = "; ".join([f"{ip}({cnt})" for ip, cnt in top_fails])
+        top_fail_count = top_fails[0][1] if top_fails else 0
+    else:
+        top_fail_ips_str = "无"
+        top_fail_count = 0
+    
+    # Replace template variables
+    html_content = template.format(
+        SUBJECT_PREFIX=SUBJECT_PREFIX,
+        start=start.strftime('%Y-%m-%d %H:%M:%S'),
+        end=end.strftime('%Y-%m-%d %H:%M:%S'),
+        TOP_N=top_n,
+        ban_count=len(uniq_ban),
+        unban_count=len(uniq_unban),
+        fail_count=len(uniq_fails),
+        ban_ips=ban_ips_str if ban_ips_str else "无",
+        unban_ips=unban_ips_str if unban_ips_str else "无",
+        top_fail_count=top_fail_count,
+        top_fail_ips=top_fail_ips_str
+    )
+    
+    return html_content
+
+
+def send_mail_smtp(subject: str, body: str, html_body: str = None):
     if not MAIL_TO:
         print("[WARN] MAIL_TO not set; skip sending.")
         return
-    msg = MIMEText(body)
+
+    # Create multipart message
+    msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
     msg["From"] = SMTP_FROM
     msg["To"] = ", ".join(MAIL_TO)
+
+    # Add text part
+    text_part = MIMEText(body, "plain", "utf-8")
+    msg.attach(text_part)
+    
+    # Add HTML part if provided
+    if html_body:
+        html_part = MIMEText(html_body, "html", "utf-8")
+        msg.attach(html_part)
 
     if SMTP_PORT == 465:
         context = ssl.create_default_context()
@@ -176,7 +253,7 @@ def send_mail_smtp(subject: str, body: str):
             server.sendmail(SMTP_FROM, MAIL_TO, msg.as_string())
 
 
-def send_mail_resend(subject: str, body: str):
+def send_mail_resend(subject: str, body: str, html_body: str = None):
     if not requests:
         raise RuntimeError("requests not available; cannot use Resend.")
     if not MAIL_TO:
@@ -184,6 +261,7 @@ def send_mail_resend(subject: str, body: str):
         return
     if not RESEND_API_KEY or not RESEND_FROM:
         raise RuntimeError("RESEND_API_KEY / RESEND_FROM not set.")
+
     url = "https://api.resend.com/emails"
     payload = {
         "from": RESEND_FROM,
@@ -191,6 +269,11 @@ def send_mail_resend(subject: str, body: str):
         "subject": subject,
         "text": body,
     }
+    
+    # Add HTML content if provided
+    if html_body:
+        payload["html"] = html_body
+    
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
         "Content-Type": "application/json",
@@ -203,15 +286,19 @@ def send_mail_resend(subject: str, body: str):
 def run_once(now: datetime, interval: timedelta):
     start = now - interval
     ban_ips, unban_ips, found_ips, fails = parse_log_window(LOG_PATH, start, now)
-    report = build_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
+    
+    # Build both text and HTML reports
+    text_report = build_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
+    html_report = build_html_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
+    
     subject = f"{SUBJECT_PREFIX} Fail2Ban 报告 {now.strftime('%Y-%m-%d %H:%M:%S')}"
 
-    print("\n=== Report Begin ===\n" + report + "\n=== Report End ===\n")
+    print(f"\\n=== Report Begin ===\\n" + text_report + "\\n=== Report End ===\\n")
 
     if MAIL_PROVIDER == "smtp":
-        send_mail_smtp(subject, report)
+        send_mail_smtp(subject, text_report, html_report)
     elif MAIL_PROVIDER == "resend":
-        send_mail_resend(subject, report)
+        send_mail_resend(subject, text_report, html_report)
     else:
         raise ValueError(f"Unknown MAIL_PROVIDER: {MAIL_PROVIDER}")
 

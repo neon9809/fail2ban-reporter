@@ -1,0 +1,141 @@
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+ body, table, p, a {
+     margin: 0;
+     padding: 0;
+     border: 0;
+     font-size: 100%;
+     font-family: Arial, sans-serif;
+     line-height: 1.5;
+}
+td {
+     margin: 0;
+     padding: 0;
+     border: 0;
+     font-size: 100%;
+     font-family: Arial, sans-serif;
+     line-height: 1.5;
+}
+ body {
+     background-color: #f0f0f0;
+     color: #565656;
+}
+ .container {
+     width: 100%;
+     max-width: 600px;
+     margin: 40px auto;
+     background-color: #fff;
+     border-radius: 10px;
+     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+     padding: 32px;
+     margin-bottom: 50px;
+}
+ .header {
+     display: flex;
+     margin-bottom: 24px;
+}
+ .header h1 {
+     font-size: 1.5rem;
+     display: inline-block;
+     vertical-align: middle;
+     margin-left: 8px;
+}
+ .provider {
+     background-color: #979797;
+     color: #ffffff;
+     padding: 4px 12px;
+     border-radius: 50px;
+     font-size: 0.875rem;
+     margin: auto 0 auto auto;
+}
+ .footer {
+     color: #999999;
+     font-size: 0.875rem;
+     margin-bottom: 0.666rem;
+     text-align: center;
+}
+ .content {
+     background-color: #fafafa;
+     padding: 20px;
+     border-radius: 10px;
+}
+ .content h2 {
+     font-size: 1.2rem;
+     font-weight: bold;
+     margin-bottom: 16px;
+}
+ .grid {
+     width: 100%;
+     margin-bottom: 16px;
+}
+ .grid td {
+     width: 50%;
+     padding-bottom: 8px;
+     vertical-align: top;
+}
+ .label {
+     color: #888;
+     font-size: 0.875rem;
+}
+</style>
+</head>
+<body>
+<div class="container">
+<div class="header">
+<div>
+      <h1>{SUBJECT_PREFIX} IP拦截报告</br><p style="font-size:0.8rem;color:#aaaaaa">{start} - {end}</p></h1>
+   </div>
+   <div class="provider">Fail2Ban</div>
+</div>
+<div class="content">
+   <h2>Ban IP 数量: {ban_count}</h2>
+   <table class="grid">
+      <tr>
+         <td>
+            <p class="label">IP Address</p>
+            <p style="color:#aaaaaa;margin-top:0.8rem">{ban_ips}</p>
+         </td>
+      </tr>
+   </table>
+</div>
+</br>
+<div class="content">
+<h2>Unban IP 数量: {unban_count}</h2>
+   <table class="grid">
+      <tr>
+         <td>
+            <p class="label">IP Address</p>
+            <p style="color:#aaaaaa;margin-top:0.8rem">{unban_ips}</p>
+         </td>
+      </tr>
+   </table>
+</div>
+</br>
+<div class="content">
+   <h2>失败尝试计数: {fail_count}</br><p style="font-size:0.8rem;color:#aaaaaa">计数最高的 {TOP_N} 个IP</p></h2>
+
+   <table class="grid">
+               <tr>
+                    <td style="width:30%">
+                        <p class="label">Attempts</p>
+                        <p style="margin-top:0.5rem">{top_fail_count}</p>
+                    </td>
+                    <td style="width:70%">
+                        <p class="label">IP Address</p>
+                        <p style="color:#aaaaaa;margin-top:0.5rem">{top_fail_ips}</p>
+                    </td>
+                </tr>
+   </table>
+</div>
+</div>
+</body>
+<div class="footer">
+</br>
+            <a href="https://github.com/neon9809/fail2ban-reporter">Fail2ban Reporter</a>
+            &copy; 2025 All Rights Reserved.
+</div>
+</html>
+

@@ -2,7 +2,10 @@ name: build-and-push
 
 on:
   push:
-    tags: [ 'v*' ]
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
   workflow_dispatch:
     inputs:
       version:
@@ -11,9 +14,11 @@ on:
 
 jobs:
   docker:
+    # 仅在 commit message 以 v 开头时执行
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 注意要改成 write 才能发 release
+      contents: write   # 必须是 write 才能发 release
       packages: write
       id-token: write
 
@@ -21,13 +26,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract version tag
+      - name: Extract version
         id: get_version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "VERSION=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
-            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+            # 从 commit message 里提取 vX.Y.Z
+            MSG="$(git log -1 --pretty=%B)"
+            if [[ "$MSG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+              echo "VERSION=${BASH_REMATCH[0]}" >> $GITHUB_OUTPUT
+            else
+              echo "❌ Commit message must start with vX.Y.Z" >&2
+              exit 1
+            fi
           fi
 
       - name: Set up QEMU

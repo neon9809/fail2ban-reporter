@@ -76,10 +76,15 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ steps.get_version.outputs.VERSION }}
-          provenance: false
+          push: true
+          outputs: type=registry
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.extract-version.outputs.version }}
+
 
       - name: Prepare release notes
         id: notes

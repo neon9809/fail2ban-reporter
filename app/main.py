@@ -48,7 +48,7 @@ BAN_RE = re.compile(r"Ban\s+([^\s]+)")
 UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
 FOUND_RE = re.compile(r"Found\b")
 
-INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+INTERVAL_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
 
 
 def parse_interval(s: str) -> timedelta:

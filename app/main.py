@@ -163,29 +163,30 @@ def build_html_report(start: datetime, end: datetime,
                      fails: int,
                      top_n: int) -> str:
     """
-    Build HTML report using the template file
+    Build HTML report using Template class (修复版本)
     """
+    from string import Template
+    
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
     uniq_fails = sorted(set(found_ips))
-    # Top N IPs by Found occurrences
     top_fails = Counter(found_ips).most_common(top_n)
     
     # Read HTML template
     template_path = os.path.join(os.path.dirname(__file__), "report-template.html")
     try:
         with open(template_path, "r", encoding="utf-8") as f:
-            template = f.read()
+            template_content = f.read()
     except FileNotFoundError:
-        # Fallback to simple HTML if template not found
-        return f"""
+        # Fallback template if file not found
+        template_content = """
         <html>
         <body>
-        <h1>{SUBJECT_PREFIX} IP拦截报告</h1>
-        <p>时间范围: {start} - {end}</p>
-        <p>Ban IP 数量: {len(uniq_ban)}</p>
-        <p>Unban IP 数量: {len(uniq_unban)}</p>
-        <p>失败尝试计数: {len(uniq_fails)}</p>
+        <h1>$SUBJECT_PREFIX IP拦截报告</h1>
+        <p>时间范围: $start - $end</p>
+        <p>Ban IP 数量: $ban_count</p>
+        <p>Unban IP 数量: $unban_count</p>
+        <p>失败尝试计数: $fail_count</p>
         </body>
         </html>
         """
@@ -202,8 +203,11 @@ def build_html_report(start: datetime, end: datetime,
         top_fail_ips_str = "无"
         top_fail_count = 0
     
-    # Replace template variables
-    html_content = template.format(
+    # Use Template class for safe substitution
+    template_obj = Template(template_content)
+    
+    # Use safe_substitute to handle missing variables gracefully
+    html_content = template_obj.safe_substitute(
         SUBJECT_PREFIX=SUBJECT_PREFIX,
         start=start.strftime('%Y-%m-%d %H:%M:%S'),
         end=end.strftime('%Y-%m-%d %H:%M:%S'),
@@ -218,6 +222,7 @@ def build_html_report(start: datetime, end: datetime,
     )
     
     return html_content
+
 
 
 def send_mail_smtp(subject: str, body: str, html_body: str = None):

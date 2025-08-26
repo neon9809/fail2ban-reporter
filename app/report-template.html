@@ -86,46 +86,45 @@ td {
 <div class="container">
 <div class="header">
 <div>
-      <h1>{SUBJECT_PREFIX} IP拦截报告</br><p style="font-size:0.8rem;color:#aaaaaa">{start} - {end}</p></h1>
+      <h1>$SUBJECT_PREFIX IP拦截报告</br><p style="font-size:0.8rem;color:#aaaaaa">$start - $end</p></h1>
    </div>
    <div class="provider">Fail2Ban</div>
 </div>
 <div class="content">
-   <h2>Ban IP 数量: {ban_count}</h2>
+   <h2>Ban IP 数量: $ban_count</h2>
    <table class="grid">
       <tr>
          <td>
             <p class="label">IP Address</p>
-            <p style="color:#aaaaaa;margin-top:0.8rem">{ban_ips}</p>
+            <p style="color:#aaaaaa;margin-top:0.8rem">$ban_ips</p>
          </td>
       </tr>
    </table>
 </div>
 </br>
 <div class="content">
-<h2>Unban IP 数量: {unban_count}</h2>
+<h2>Unban IP 数量: $unban_count</h2>
    <table class="grid">
       <tr>
          <td>
             <p class="label">IP Address</p>
-            <p style="color:#aaaaaa;margin-top:0.8rem">{unban_ips}</p>
+            <p style="color:#aaaaaa;margin-top:0.8rem">$unban_ips</p>
          </td>
       </tr>
    </table>
 </div>
 </br>
 <div class="content">
-   <h2>失败尝试计数: {fail_count}</br><p style="font-size:0.8rem;color:#aaaaaa">计数最高的 {TOP_N} 个IP</p></h2>
-
+   <h2>失败尝试计数: $fail_count</br><p style="font-size:0.8rem;color:#aaaaaa">计数最高的 $TOP_N 个IP</p></h2>
    <table class="grid">
                <tr>
                     <td style="width:30%">
                         <p class="label">Attempts</p>
-                        <p style="margin-top:0.5rem">{top_fail_count}</p>
+                        <p style="margin-top:0.5rem">$top_fail_count</p>
                     </td>
                     <td style="width:70%">
                         <p class="label">IP Address</p>
-                        <p style="color:#aaaaaa;margin-top:0.5rem">{top_fail_ips}</p>
+                        <p style="color:#aaaaaa;margin-top:0.5rem">$top_fail_ips</p>
                     </td>
                 </tr>
    </table>
@@ -138,4 +137,3 @@ td {
             &copy; 2025 All Rights Reserved.
 </div>
 </html>
-

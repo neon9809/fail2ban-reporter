@@ -192,9 +192,9 @@ def build_html_report(start: datetime, end: datetime,
         """
     
     # Format IP lists for display
-    ban_ips_str = "; ".join(uniq_ban[:10]) + ("..." if len(uniq_ban) > 10 else "")
-    unban_ips_str = "; ".join(uniq_unban[:10]) + ("..." if len(uniq_unban) > 10 else "")
-    
+    ban_ips_str = "  ".join(uniq_ban) if uniq_ban else " - "
+    unban_ips_str = "  ".join(uniq_unban) if uniq_unban else " - "
+
     # Format top fail IPs and counts with line breaks
     if top_fails:
         # 每行一个 count 和对应 IP
@@ -216,8 +216,8 @@ def build_html_report(start: datetime, end: datetime,
         ban_count=len(uniq_ban),
         unban_count=len(uniq_unban),
         fail_count=len(uniq_fails),
-        ban_ips=ban_ips_str if ban_ips_str else "无",
-        unban_ips=unban_ips_str if unban_ips_str else "无",
+        ban_ips=ban_ips_str if ban_ips_str else " - ",
+        unban_ips=unban_ips_str if unban_ips_str else " - ",
         top_fail_count=counts_html,
         top_fail_ips=ips_html
     )

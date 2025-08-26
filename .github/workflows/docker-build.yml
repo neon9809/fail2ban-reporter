@@ -12,14 +12,18 @@ on:
         description: 'Version tag (without v prefix)'
         required: true
 
+env:
+  REGISTRY: ghcr.io/${{ github.repository_owner }}
+  IMAGE_NAME: fail2ban-reporter
+
 jobs:
   docker:
-    # 仅在 commit message 以 v 开头时执行
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'v')
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # 必须是 write 才能发 release
+      contents: write
       packages: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,7 +34,6 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "VERSION=v${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
-            # 从 commit message 里提取 vX.Y.Z
             MSG="$(git log -1 --pretty=%B)"
             if [[ "$MSG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
               echo "VERSION=${BASH_REMATCH[0]}" >> $GITHUB_OUTPUT
@@ -60,13 +63,13 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ needs.extract-version.outputs.version }}
+            type=raw,value=${{ steps.get_version.outputs.VERSION }}
           labels: |
             org.opencontainers.image.title=${{ github.repository }}
             org.opencontainers.image.description=Fail2ban log monitoring and reporting tool
             org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ needs.extract-version.outputs.version }}
+            org.opencontainers.image.version=${{ steps.get_version.outputs.VERSION }}
             org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=MIT
@@ -83,8 +86,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            VERSION=${{ needs.extract-version.outputs.version }}
-
+            VERSION=${{ steps.get_version.outputs.VERSION }}
 
       - name: Prepare release notes
         id: notes

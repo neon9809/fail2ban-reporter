@@ -1,139 +1,130 @@
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<style>
- body, table, p, a {
-     margin: 0;
-     padding: 0;
-     border: 0;
-     font-size: 100%;
-     font-family: Arial, sans-serif;
-     line-height: 1.5;
-}
-td {
-     margin: 0;
-     padding: 0;
-     border: 0;
-     font-size: 100%;
-     font-family: Arial, sans-serif;
-     line-height: 1.5;
-}
- body {
-     background-color: #f0f0f0;
-     color: #565656;
-}
- .container {
-     width: 100%;
-     max-width: 600px;
-     margin: 40px auto;
-     background-color: #fff;
-     border-radius: 10px;
-     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-     padding: 32px;
-     margin-bottom: 50px;
-}
- .header {
-     display: flex;
-     margin-bottom: 24px;
-}
- .header h1 {
-     font-size: 1.5rem;
-     display: inline-block;
-     vertical-align: middle;
-     margin-left: 8px;
-}
- .provider {
-     background-color: #979797;
-     color: #ffffff;
-     padding: 4px 12px;
-     border-radius: 50px;
-     font-size: 0.875rem;
-     margin: auto 0 auto auto;
-}
- .footer {
-     width: 100%;
-     color: #999999;
-     font-size: 0.875rem;
-     margin-bottom: 0.666rem;
-     text-align: center;
-}
- .content {
-     background-color: #fafafa;
-     padding: 20px;
-     border-radius: 10px;
-}
- .content h2 {
-     font-size: 1.2rem;
-     font-weight: bold;
-     margin-bottom: 16px;
-}
- .grid {
-     width: 100%;
-     margin-bottom: 16px;
-}
- .grid td {
-     width: 100%;
-     padding-bottom: 8px;
-     vertical-align: top;
-}
- .label {
-     color: #888;
-     font-size: 0.875rem;
-}
-</style>
-</head>
-<body>
-<div class="container">
-<div class="header">
-<div>
-      <h1>$SUBJECT_PREFIX IP拦截报告</br><p style="font-size:0.8rem;color:#aaaaaa">$start - $end</p></h1>
-   </div>
-   <div class="provider">Fail2Ban</div>
-</div>
-<div class="content">
-   <h2>Ban IP 数量: $ban_count</h2>
-   <table class="grid">
-      <tr>
-         <td>
-            <p class="label">IP Address</p>
-            <p style="color:#aaaaaa;margin-top:0.8rem">$ban_ips</p>
-         </td>
-      </tr>
-   </table>
-</div>
-</br>
-<div class="content">
-<h2>Unban IP 数量: $unban_count</h2>
-   <table class="grid">
-      <tr>
-         <td>
-            <p class="label">IP Address</p>
-            <p style="color:#aaaaaa;margin-top:0.8rem">$unban_ips</p>
-         </td>
-      </tr>
-   </table>
-</div>
-</br>
-<div class="content">
-   <h2>失败尝试计数: $fail_count</br><p style="font-size:0.8rem;color:#aaaaaa">计数最高的 $TOP_N 个IP</p></h2>
-   <table class="grid">
-               <tr>
-                    <td style="width:30%">
-                        <p class="label">Attempts</p>
-                        <p style="margin-top:0.5rem">$top_fail_count</p>
-                    </td>
-                    <td style="width:70%">
-                        <p class="label">IP Address</p>
-                        <p style="color:#aaaaaa;margin-top:0.5rem">$top_fail_ips</p>
-                    </td>
-                </tr>
-   </table>
-</div>
-</div>
-</body>
-<div class="footer">
-            <a href="https://github.com/neon9809/fail2ban-reporter">Fail2ban Reporter</a>
-            &copy; 2025 All Rights Reserved.
-</div>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"  
+  "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN">
+	<head>
+		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Fail2Ban 报告</title>
+		<style type="text/css">
+			body, html {
+			      margin:0 !important; padding:0 !important; width:100% !important; 
+			      -ms-text-size-adjust:100%; -webkit-text-size-adjust:100%;
+			      background-color:#f0f0f0 !important;
+			    }
+			    table, td {
+			      mso-table-lspace:0; mso-table-rspace:0;
+			      border-collapse:collapse !important; border-spacing:0 !important;
+			    }
+			    img {
+			      -ms-interpolation-mode:bicubic; display:block; border:0; line-height:0; font-size:0;
+			    }
+			    *[class].full-width { width:100% !important; max-width:600px !important; }
+			    *[class].stack-column { display:block !important; width:100% !important; max-width:100% !important; }
+			    @media only screen and (max-width:504px) {
+			      .stack-column { display:block !important; width:100% !important; }
+			    }
+		</style>
+	</head>
+	<body style="margin:0; padding:0; background-color:#f0f0f0;">
+		<!-- email container -->
+		<center style="width:100%; background-color:#f0f0f0;">
+			<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+				<tr>
+					<td align="center" style="padding: 0;padding-top:3rem">
+						<!-- white content -->
+						<table role="presentation" class="full-width" width="600" cellpadding="0" cellspacing="0" border="0" style="background-color:#ffffff; border-radius:1.2rem; box-shadow:0 0.4rem 0.6rem rgba(0,0,0,0.1);">
+							<tr>
+								<td style="padding:2rem; padding-bottom:3.5rem;font-family:Arial,sans-serif; color:#565656;">
+									<!-- Header -->
+									<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+										<tr>
+											<td valign="middle" style="font-size:0;">
+												<div style="font-size:1.4rem; line-height:2rem; color:#000000; font-weight:bold;">
+													$SUBJECT_PREFIX IP拦截报告
+												</div>
+												<div style="font-size:0.8rem; line-height:1rem; color:#aaaaaa; margin-top:0.3rem;">
+													$start – $end
+												</div>
+											</td>
+											<td align="right" valign="middle">
+												<span style="background-color:#979797; color:#ffffff; padding:0.3rem 0.7rem; border-radius:2rem; font-size:0.9rem; line-height:1rem;">Fail2Ban</span>
+											</td>
+										</tr>
+									</table>
+
+									<!-- Ban IPs -->
+									<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
+										<tr>
+											<td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;">
+												<strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">Ban IP 数量: $ban_count</strong>
+												<br>
+												<span>IP Address</span>
+												<br>
+												<span style="color:#aaaaaa; margin-top:0.6rem; display:block;">$ban_ips</span>
+											</td>
+										</tr>
+									</table>
+
+									<!-- Unban IPs -->
+									<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
+										<tr>
+											<td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;">
+												<strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">Unban IP 数量: $unban_count</strong>
+												<br>
+												<span>IP Address</span>
+												<br>
+												<span style="color:#aaaaaa; margin-top:8px; display:block;">$unban_ips</span>
+											</td>
+										</tr>
+									</table>
+
+									<!-- Failed Attempts -->
+									<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
+										<tr>
+											<td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;">
+												<strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">失败尝试计数: $fail_count</strong>
+												<br>
+												<span style="color:#aaaaaa; font-size:0.8rem; line-height:1rem;">计数最高的 $TOP_N 个IP</span>
+												<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="font-size:0.9rem; margin-top:0.8rem;margin-bottom:1.5rem;">
+													<tr>
+														<td width="40%" valign="top">
+															<span>Attempts</span>
+															<br>
+															<span style="color:#000000; margin-top:0.5rem; display:block;">$top_fail_count</span>
+														</td>
+														<td width="60%" valign="top">
+															<span>IP Address</span>
+															<br>
+															<span style="color:#aaaaaa; margin-top:0.5rem; display:block;">$top_fail_ips</span>
+														</td>
+													</tr>
+												</table>
+											</td>
+										</tr>
+									</table>
+
+								</td>
+							</tr>
+						</table>
+
+						<!-- Footer -->
+						<table role="presentation" class="full-width" width="600" cellpadding="0" cellspacing="0" border="0" style="margin-top:2rem; background-color:#f0f0f0; border-radius:0;">
+							<tr>
+								<td align="center" style="padding:1rem; font-family:Arial,sans-serif; font-size:0.8rem; line-height:1.1rem; color:#999999;">
+									<a href="https://github.com/neon9809/fail2ban-reporter" style="color:#999999; text-decoration:none;">Fail2ban Reporter</a>
+									<br>
+									&copy; 2025 All Rights Reserved.
+								</td>
+							</tr>
+						</table>
+
+						<!-- 1×1 透明像素，放置于 body 末尾避免空白 -->
+						<img src="https://i.emlfiles4.com/cmpimg/t/s.gif" width="1" height="1" alt="" />
+
+					</td>
+				</tr>
+			</table>
+		</center>
+	</body>
 </html>

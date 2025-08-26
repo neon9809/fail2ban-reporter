@@ -52,12 +52,14 @@ INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 
 def parse_interval(s: str) -> timedelta:
-    m = INTERVAL_RE.match(s.strip())
-    if not m or (not m.group("h") and not m.group("m") and not m.group("s")):
+    interval_match = INTERVAL_RE.match(s.strip())
+    if not interval_match:
         raise ValueError(f"Invalid INTERVAL: '{s}'. Use forms like '30m', '15m', '45s'.")
-    h = int(m.group("h") or 0)
-    m_ = int(m.group("m") or 0)
-    s_ = int(m.group("s") or 0)
+    h = int(interval_match.groupdict().get("h") or 0)
+    m_ = int(interval_match.groupdict().get("m") or 0)
+    s_ = int(interval_match.groupdict().get("s") or 0)
+    if h == 0 and m_ == 0 and s_ == 0:
+        raise ValueError(f"Invalid INTERVAL: '{s}'. Must include h/m/s.")
     return timedelta(hours=h, minutes=m_, seconds=s_)
 
 
@@ -91,11 +93,11 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
             if not (start <= ts <= end):
                 continue
 
-            if m := BAN_RE.search(line):
-                ip = m.group(1)
+            if match_ban := BAN_RE.search(line):
+                ip = match_ban.group(1)
                 ban_ips.append(ip)
-            elif m := UNBAN_RE.search(line):
-                ip = m.group(1)
+            elif match_unban := UNBAN_RE.search(line):
+                ip = match_unban.group(1)
                 unban_ips.append(ip)
             elif FOUND_RE.search(line):
                 # extract IP after 'Found' keyword if present
@@ -320,3 +322,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    

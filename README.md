@@ -119,6 +119,6 @@ services:
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释, 在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。
 
 

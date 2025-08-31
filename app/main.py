@@ -9,7 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Tuple, Dict, Counter
 from collections import Counter
-
+import pickle
 try:
     import requests
 except Exception:
@@ -17,6 +17,8 @@ except Exception:
 
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/fail2ban.log")
 INTERVAL_STR = os.getenv("INTERVAL", "1h")
+COLLECT_INTERVAL = int(os.getenv("COLLECT_INTERVAL", "300"))  # 数据收集间隔(秒)，默认5分钟
+DATA_CACHE_PATH = os.getenv("DATA_CACHE_PATH", "/tmp/fail2ban_cache.pkl")  # 缓存文件路径
 MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "smtp").lower()
 MAIL_TO = [x.strip() for x in os.getenv("MAIL_TO", "").split(",") if x.strip()]
 SUBJECT_PREFIX = os.getenv("SUBJECT_PREFIX", "[Fail2Ban]")
@@ -34,11 +36,11 @@ SMTP_FROM = os.getenv("SMTP_FROM", SMTP_USER or "no-reply@example.com")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 RESEND_FROM = os.getenv("RESEND_FROM", "")
 
-# Timezone handling (optional TZ env)
+# Timezone handling
 if tz := os.getenv("TZ"):
     os.environ["TZ"] = tz
     try:
-        time.tzset()  # type: ignore[attr-defined]
+        time.tzset()
     except Exception:
         pass
 
@@ -47,9 +49,86 @@ TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 BAN_RE = re.compile(r"Ban\s+([^\s]+)")
 UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
 FOUND_RE = re.compile(r"Found\b")
-
 INTERVAL_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
 
+class DataCollector:
+    """数据收集和缓存类"""
+    
+    def __init__(self, cache_path: str):
+        self.cache_path = cache_path
+        self.data = self.load_cache()
+        
+    def load_cache(self) -> Dict:
+        """从缓存文件加载数据"""
+        try:
+            if os.path.exists(self.cache_path):
+                with open(self.cache_path, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            print(f"[WARN] 加载缓存失败: {e}")
+        
+        return {
+            'ban_events': [],      # [(timestamp, ip), ...]
+            'unban_events': [],    # [(timestamp, ip), ...]
+            'found_events': [],    # [(timestamp, ip), ...]
+            'last_processed': None # 最后处理的日志位置
+        }
+    
+    def save_cache(self):
+        """保存数据到缓存文件"""
+        try:
+            # 确保目录存在
+            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            with open(self.cache_path, 'wb') as f:
+                pickle.dump(self.data, f)
+        except Exception as e:
+            print(f"[ERROR] 保存缓存失败: {e}")
+    
+    def collect_new_data(self, log_path: str, since: datetime = None):
+        """收集新的日志数据"""
+        if since is None:
+            since = self.data.get('last_processed', datetime.now() - timedelta(minutes=10))
+        
+        now = datetime.now()
+        ban_ips, unban_ips, found_ips, _ = parse_log_window(log_path, since, now)
+        
+        # 添加到缓存数据中
+        for ip in ban_ips:
+            self.data['ban_events'].append((now, ip))
+        
+        for ip in unban_ips:
+            self.data['unban_events'].append((now, ip))
+            
+        for ip in found_ips:
+            self.data['found_events'].append((now, ip))
+        
+        # 更新最后处理时间
+        self.data['last_processed'] = now
+        
+        # 清理过期数据（保留比报告间隔长一些的数据）
+        self.cleanup_old_data(timedelta(days=1))  # 保留1天的数据
+        
+        # 保存缓存
+        self.save_cache()
+        
+        print(f"[INFO] 收集数据完成: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
+    
+    def cleanup_old_data(self, keep_duration: timedelta):
+        """清理过期数据"""
+        cutoff = datetime.now() - keep_duration
+        
+        self.data['ban_events'] = [(ts, ip) for ts, ip in self.data['ban_events'] if ts > cutoff]
+        self.data['unban_events'] = [(ts, ip) for ts, ip in self.data['unban_events'] if ts > cutoff]
+        self.data['found_events'] = [(ts, ip) for ts, ip in self.data['found_events'] if ts > cutoff]
+    
+    def get_report_data(self, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
+        """获取指定时间范围内的报告数据"""
+        ban_ips = [ip for ts, ip in self.data['ban_events'] if start <= ts <= end]
+        unban_ips = [ip for ts, ip in self.data['unban_events'] if start <= ts <= end]
+        found_ips = [ip for ts, ip in self.data['found_events'] if start <= ts <= end]
+        fails_count = len(found_ips)
+        
+        return ban_ips, unban_ips, found_ips, fails_count
 
 def parse_interval(s: str) -> timedelta:
     interval_match = INTERVAL_RE.match(s.strip())
@@ -62,11 +141,9 @@ def parse_interval(s: str) -> timedelta:
         raise ValueError(f"Invalid INTERVAL: '{s}'. Must include h/m/s.")
     return timedelta(hours=h, minutes=m_, seconds=s_)
 
-
 def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
     """
-    Returns: ban_ips_list, unban_ips_list, found_ips_list, fails_count within [start, end].
-    found_ips_list contains one entry per 'Found' line with the offending IP.
+    解析指定时间窗口内的日志
     """
     ban_ips: List[str] = []
     unban_ips: List[str] = []
@@ -89,7 +166,6 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
                     ts = datetime.fromisoformat(ts_str)
                 except Exception:
                     continue
-
             if not (start <= ts <= end):
                 continue
 
@@ -100,7 +176,6 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
                 ip = match_unban.group(1)
                 unban_ips.append(ip)
             elif FOUND_RE.search(line):
-                # extract IP after 'Found' keyword if present
                 parts = line.split()
                 for idx, w in enumerate(parts):
                     if w == "Found" and idx + 1 < len(parts):
@@ -109,7 +184,6 @@ def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[st
                 fails += 1
 
     return ban_ips, unban_ips, found_ips, fails
-
 
 def build_report(start: datetime, end: datetime,
                 ban_ips: List[str],
@@ -120,6 +194,7 @@ def build_report(start: datetime, end: datetime,
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
     uniq_fails = sorted(set(found_ips))
+
     # Top N IPs by Found occurrences
     top_fails = Counter(found_ips).most_common(top_n)
 
@@ -130,7 +205,6 @@ def build_report(start: datetime, end: datetime,
     lines.append(f"Unban IP 数量: {len(uniq_unban)}")
     lines.append(f"失败尝试次数(Found): {fails}")
     lines.append("")
-
     lines.append("Ban IP List:")
     if uniq_ban:
         for ip in uniq_ban:
@@ -138,7 +212,6 @@ def build_report(start: datetime, end: datetime,
     else:
         lines.append("  - (无)")
     lines.append("")
-
     lines.append("Unban IP List:")
     if uniq_unban:
         for ip in uniq_unban:
@@ -146,15 +219,12 @@ def build_report(start: datetime, end: datetime,
     else:
         lines.append("  - (无)")
     lines.append("")
-
     if top_fails:
         lines.append(f"失败尝试次数最多的{top_n}个IP:")
         for ip, cnt in top_fails:
             lines.append(f"  - {ip} ({cnt})")
     lines.append("")
-
     return "\n".join(lines)
-
 
 def build_html_report(start: datetime, end: datetime,
                      ban_ips: List[str],
@@ -163,15 +233,14 @@ def build_html_report(start: datetime, end: datetime,
                      fails: int,
                      top_n: int) -> str:
     """
-    Build HTML report using Template class (修复版本)
+    Build HTML report using Template class
     """
     from string import Template
-    
     uniq_ban = sorted(set(ban_ips))
     uniq_unban = sorted(set(unban_ips))
     uniq_fails = sorted(set(found_ips))
     top_fails = Counter(found_ips).most_common(top_n)
-    
+
     # Read HTML template
     template_path = os.path.join(os.path.dirname(__file__), "report-template.html")
     try:
@@ -190,24 +259,21 @@ def build_html_report(start: datetime, end: datetime,
         </body>
         </html>
         """
-    
+
     # Format IP lists for display
     ban_ips_str = "  ".join(uniq_ban) if uniq_ban else " - "
     unban_ips_str = "  ".join(uniq_unban) if uniq_unban else " - "
-
+    
     # Format top fail IPs and counts with line breaks
     if top_fails:
-        # 每行一个 count 和对应 IP
         counts_html = "<br/>".join(str(cnt) for _, cnt in top_fails)
-        ips_html    = "<br/>".join(ip       for ip, _ in top_fails)
+        ips_html = "<br/>".join(ip for ip, _ in top_fails)
     else:
         counts_html = "无"
-        ips_html    = "无"
-    
+        ips_html = "无"
+
     # Use Template class for safe substitution
     template_obj = Template(template_content)
-    
-    # Use safe_substitute to handle missing variables gracefully
     html_content = template_obj.safe_substitute(
         SUBJECT_PREFIX=SUBJECT_PREFIX,
         start=start.strftime('%Y-%m-%d %H:%M:%S'),
@@ -221,10 +287,7 @@ def build_html_report(start: datetime, end: datetime,
         top_fail_count=counts_html,
         top_fail_ips=ips_html
     )
-    
     return html_content
-
-
 
 def send_mail_smtp(subject: str, body: str, html_body: str = None):
     if not MAIL_TO:
@@ -240,7 +303,7 @@ def send_mail_smtp(subject: str, body: str, html_body: str = None):
     # Add text part
     text_part = MIMEText(body, "plain", "utf-8")
     msg.attach(text_part)
-    
+
     # Add HTML part if provided
     if html_body:
         html_part = MIMEText(html_body, "html", "utf-8")
@@ -260,7 +323,6 @@ def send_mail_smtp(subject: str, body: str, html_body: str = None):
                 server.login(SMTP_USER, SMTP_PASS)
             server.sendmail(SMTP_FROM, MAIL_TO, msg.as_string())
 
-
 def send_mail_resend(subject: str, body: str, html_body: str = None):
     if not requests:
         raise RuntimeError("requests not available; cannot use Resend.")
@@ -277,11 +339,10 @@ def send_mail_resend(subject: str, body: str, html_body: str = None):
         "subject": subject,
         "text": body,
     }
-    
     # Add HTML content if provided
     if html_body:
         payload["html"] = html_body
-    
+
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
         "Content-Type": "application/json",
@@ -290,18 +351,18 @@ def send_mail_resend(subject: str, body: str, html_body: str = None):
     if resp.status_code >= 300:
         raise RuntimeError(f"Resend API error: {resp.status_code} {resp.text}")
 
-
-def run_once(now: datetime, interval: timedelta):
+def send_report(collector: DataCollector, now: datetime, interval: timedelta):
+    """发送报告邮件"""
     start = now - interval
-    ban_ips, unban_ips, found_ips, fails = parse_log_window(LOG_PATH, start, now)
-    
+    ban_ips, unban_ips, found_ips, fails = collector.get_report_data(start, now)
+
     # Build both text and HTML reports
     text_report = build_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
     html_report = build_html_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
-    
+
     subject = f"{SUBJECT_PREFIX} Fail2Ban 报告 {now.strftime('%Y-%m-%d %H:%M:%S')}"
 
-    print(f"\\n=== Report Begin ===\\n" + text_report + "\\n=== Report End ===\\n")
+    print(f"\n=== Report Begin ===\n" + text_report + "\n=== Report End ===\n")
 
     if MAIL_PROVIDER == "smtp":
         send_mail_smtp(subject, text_report, html_report)
@@ -310,23 +371,35 @@ def run_once(now: datetime, interval: timedelta):
     else:
         raise ValueError(f"Unknown MAIL_PROVIDER: {MAIL_PROVIDER}")
 
-
 def main():
     interval = parse_interval(INTERVAL_STR)
+    collector = DataCollector(DATA_CACHE_PATH)
+    
     print(f"[INFO] LOG_PATH={LOG_PATH}")
     print(f"[INFO] INTERVAL={interval}")
+    print(f"[INFO] COLLECT_INTERVAL={COLLECT_INTERVAL}s")
+    print(f"[INFO] DATA_CACHE_PATH={DATA_CACHE_PATH}")
     print(f"[INFO] MAIL_PROVIDER={MAIL_PROVIDER}")
 
+    last_report_time = datetime.now() - interval  # 立即发送第一份报告
+    
     while True:
         now = datetime.now()
+        
         try:
-            run_once(now, interval)
+            # 每次循环都收集数据
+            collector.collect_new_data(LOG_PATH)
+            
+            # 检查是否到了发送报告的时间
+            if now - last_report_time >= interval:
+                send_report(collector, now, interval)
+                last_report_time = now
+            
         except Exception as e:
-            print(f"[ERROR] run_once failed: {e}")
-        time.sleep(interval.total_seconds())
-
+            print(f"[ERROR] 处理失败: {e}")
+        
+        # 等待收集间隔
+        time.sleep(COLLECT_INTERVAL)
 
 if __name__ == "__main__":
     main()
-
-    

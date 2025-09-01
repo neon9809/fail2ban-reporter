@@ -23,6 +23,7 @@
 |---|---|---|
 | `LOG_PATH` | `/var/log/fail2ban.log` | 挂载进容器的 fail2ban 日志路径 |
 | `INTERVAL` | `3h5m` / `15m` / `1h` / `45s` | 定时周期；也用于计算每次扫描的时间窗口（*过去 INTERVAL 到现在*）|
+| `COLLECT_INTERVAL` | `300` | 日志收集周期；默认300，单位秒，以防止fail2ban日志轮转后读取异常 |
 | `MAIL_PROVIDER` | `smtp` / `resend` | 邮件发送方式 |
 | `MAIL_TO` | `admin@domain.com,sec@domain.com` | 收件人，逗号分隔 |
 | `SUBJECT_PREFIX` | `[Fail2Ban]` | 主题前缀，可选 |
@@ -119,6 +120,6 @@ services:
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。[Claude AI](https://claude.ai) (Sonnet 4)完成了针对fail2ban日志轮转机制的内部缓存代码设计。
 
 

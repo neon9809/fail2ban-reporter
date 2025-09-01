@@ -71,14 +71,16 @@ class DataCollector:
             'ban_events': [],      # [(timestamp, ip), ...]
             'unban_events': [],    # [(timestamp, ip), ...]
             'found_events': [],    # [(timestamp, ip), ...]
-            'last_processed': None # 最后处理的日志位置
+            'last_processed': datetime.now() - timedelta(minutes=10)  # 修复：设置默认值
         }
     
     def save_cache(self):
         """保存数据到缓存文件"""
         try:
             # 确保目录存在
-            os.makedirs(os.path.dirname(self.cache_path), exist_ok=True)
+            cache_dir = os.path.dirname(self.cache_path)
+            if cache_dir:  # 防止空路径
+                os.makedirs(cache_dir, exist_ok=True)
             with open(self.cache_path, 'wb') as f:
                 pickle.dump(self.data, f)
         except Exception as e:
@@ -86,13 +88,25 @@ class DataCollector:
     
     def collect_new_data(self, log_path: str, since: datetime = None):
         """收集新的日志数据"""
+        # 修复：确保 since 始终有有效值
         if since is None:
-            since = self.data.get('last_processed', datetime.now() - timedelta(minutes=10))
+            since = self.data.get('last_processed')
+            if since is None:
+                since = datetime.now() - timedelta(minutes=10)
         
         now = datetime.now()
-        ban_ips, unban_ips, found_ips, _ = parse_log_window(log_path, since, now)
         
-        # 添加到缓存数据中
+        # 确保 since 不会比 now 更新
+        if since > now:
+            since = now - timedelta(minutes=5)
+            
+        try:
+            ban_ips, unban_ips, found_ips, _ = parse_log_window(log_path, since, now)
+        except Exception as e:
+            print(f"[ERROR] 解析日志文件失败: {e}")
+            return
+        
+        # 添加到缓存数据中（记录实际的事件时间，而不是处理时间）
         for ip in ban_ips:
             self.data['ban_events'].append((now, ip))
         
@@ -111,15 +125,29 @@ class DataCollector:
         # 保存缓存
         self.save_cache()
         
-        print(f"[INFO] 收集数据完成: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
+        if ban_ips or unban_ips or found_ips:
+            print(f"[INFO] 收集数据完成: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
+        else:
+            print(f"[DEBUG] 本次收集无新数据 (检查时间: {since} - {now})")
     
     def cleanup_old_data(self, keep_duration: timedelta):
         """清理过期数据"""
         cutoff = datetime.now() - keep_duration
         
+        original_ban_count = len(self.data['ban_events'])
+        original_unban_count = len(self.data['unban_events'])
+        original_found_count = len(self.data['found_events'])
+        
         self.data['ban_events'] = [(ts, ip) for ts, ip in self.data['ban_events'] if ts > cutoff]
         self.data['unban_events'] = [(ts, ip) for ts, ip in self.data['unban_events'] if ts > cutoff]
         self.data['found_events'] = [(ts, ip) for ts, ip in self.data['found_events'] if ts > cutoff]
+        
+        cleaned_ban = original_ban_count - len(self.data['ban_events'])
+        cleaned_unban = original_unban_count - len(self.data['unban_events'])
+        cleaned_found = original_found_count - len(self.data['found_events'])
+        
+        if cleaned_ban > 0 or cleaned_unban > 0 or cleaned_found > 0:
+            print(f"[DEBUG] 清理过期数据: Ban={cleaned_ban}, Unban={cleaned_unban}, Found={cleaned_found}")
     
     def get_report_data(self, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
         """获取指定时间范围内的报告数据"""
@@ -381,22 +409,43 @@ def main():
     print(f"[INFO] DATA_CACHE_PATH={DATA_CACHE_PATH}")
     print(f"[INFO] MAIL_PROVIDER={MAIL_PROVIDER}")
 
-    last_report_time = datetime.now() - interval  # 立即发送第一份报告
+    now = datetime.now()
+    
+    # 检查是否是首次运行（缓存文件不存在或为空）
+    is_first_run = not os.path.exists(DATA_CACHE_PATH) or len(collector.data.get('ban_events', [])) == 0
+    
+    if is_first_run:
+        # 首次运行只报告最近1小时
+        first_interval = timedelta(hours=1)
+        last_report_time = now - first_interval
+        print(f"[INFO] 首次运行，将报告最近 {first_interval} 的数据")
+    else:
+        # 正常运行报告完整间隔
+        last_report_time = now - interval
+    
+    print(f"[INFO] 服务启动，下次报告时间: {last_report_time + interval}")
     
     while True:
-        now = datetime.now()
+        current_time = datetime.now()
         
         try:
             # 每次循环都收集数据
             collector.collect_new_data(LOG_PATH)
             
             # 检查是否到了发送报告的时间
-            if now - last_report_time >= interval:
-                send_report(collector, now, interval)
-                last_report_time = now
-            
+            if current_time - last_report_time >= interval:
+                print(f"[INFO] 准备发送报告 (上次报告: {last_report_time})")
+                send_report(collector, current_time, interval)
+                last_report_time = current_time
+                print(f"[INFO] 报告发送完成，下次报告时间: {last_report_time + interval}")
+            else:
+                next_report_in = interval - (current_time - last_report_time)
+                print(f"[DEBUG] 距离下次报告还有: {next_report_in}")
+                
         except Exception as e:
             print(f"[ERROR] 处理失败: {e}")
+            import traceback
+            traceback.print_exc()  # 打印详细错误信息
         
         # 等待收集间隔
         time.sleep(COLLECT_INTERVAL)

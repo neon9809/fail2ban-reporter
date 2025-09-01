@@ -4,7 +4,7 @@ FROM python:3.11-alpine
 RUN adduser -D app && \
     apk add --no-cache tzdata ca-certificates && \
     pip install --no-cache-dir --upgrade pip && \
-    mkdir -p /app /app/cache
+    mkdir -p /app/cache
 
 WORKDIR /app
 
@@ -14,8 +14,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app/main.py /app/main.py
 COPY app/report-template.html /app/report-template.html
 
-# 给app用户写入缓存目录的权限
-RUN chown -R app:app /app
+# 修复：确保 app 用户拥有缓存目录的权限
+RUN chown -R app:app /app && chmod -R 755 /app/cache
 
 USER app
 

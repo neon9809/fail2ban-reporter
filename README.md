@@ -21,7 +21,7 @@
 ## 环境变量
 | 变量 | 示例 | 说明 |
 |---|---|---|
-| `LOG_PATH` | `/var/log/fail2ban.log` | 挂载进容器的 fail2ban 日志路径 |
+| `LOG_PATH` | `/f2btemp/fail2ban.log` | 挂载进容器的 fail2ban 日志路径 |
 | `INTERVAL` | `3h5m` / `15m` / `1h` / `45s` | 定时周期；也用于计算每次扫描的时间窗口（*过去 INTERVAL 到现在*）|
 | `COLLECT_INTERVAL` | `300` | 日志收集周期；默认300，单位秒，以防止fail2ban日志轮转后读取异常 |
 | `MAIL_PROVIDER` | `smtp` / `resend` | 邮件发送方式 |
@@ -58,8 +58,9 @@
 ```bash
 # 只读挂载 fail2ban.log 到容器
 docker run -d --name f2b-reporter \
-  -v /var/log/fail2ban.log:/var/log/fail2ban.log:ro \ # Linux默认fail2ban日志位置
+  -v /var/log/fail2ban.log:/f2btemp/fail2ban.log:ro \ # Linux默认fail2ban日志位置
   -e INTERVAL=3h5m \
+  -e LOG_PATH=/f2btemp/fail2ban.log \
   -e MAIL_PROVIDER=resend \
   -e RESEND_API_KEY=re_xxx \
   -e RESEND_FROM=no-reply@yourdomain.com \
@@ -73,8 +74,9 @@ docker run -d --name f2b-reporter \
 ```bash
 # 只读挂载 fail2ban.log 到容器
 container run -d --name f2b-reporter \
-  -v /var/log/fail2ban.log:/var/log/fail2ban.log:ro \ # 结合实际情况修改日志位置
+  -v /var/log/fail2ban.log:/f2btemp/fail2ban.log:ro \ # 结合实际情况修改日志位置
   -e INTERVAL=3h5m \ 
+  -e LOG_PATH=/f2btemp/fail2ban.log \
   -e MAIL_PROVIDER=resend \
   -e RESEND_API_KEY=re_xxx \
   -e RESEND_FROM=no-reply@yourdomain.com \
@@ -91,7 +93,7 @@ services:
     image: ghcr.io/neon9809/fail2ban-reporter:latest
     container_name: f2b-reporter
     environment:
-      LOG_PATH: /var/log/fail2ban.log
+      LOG_PATH: /f2btemp/fail2ban.log
       INTERVAL: 3h5m
       MAIL_PROVIDER: smtp  # 或 resend
       SMTP_HOST: smtp.example.com
@@ -104,7 +106,7 @@ services:
       SUBJECT_PREFIX: "[Fail2Ban]"
       TZ: Asia/Shanghai
     volumes:
-      - /var/log/fail2ban.log:/var/log/fail2ban.log:ro
+      - /var/log:/f2btemp:ro
     restart: unless-stopped
 ```
 

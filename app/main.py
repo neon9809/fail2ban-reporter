@@ -17,7 +17,7 @@ except Exception:
 
 LOG_PATH = os.getenv("LOG_PATH", "/var/log/fail2ban.log")
 INTERVAL_STR = os.getenv("INTERVAL", "1h")
-COLLECT_INTERVAL = int(os.getenv("COLLECT_INTERVAL", "300"))  # 数据收集间隔(秒)，默认5分钟
+COLLECT_INTERVAL = int(os.getenv("COLLECT_INTERVAL", "300"))  # 数据收集周期(秒)，对应5分钟
 DATA_CACHE_PATH = os.getenv("DATA_CACHE_PATH", "/tmp/fail2ban_cache.pkl")  # 缓存文件路径
 MAIL_PROVIDER = os.getenv("MAIL_PROVIDER", "smtp").lower()
 MAIL_TO = [x.strip() for x in os.getenv("MAIL_TO", "").split(",") if x.strip()]
@@ -39,6 +39,7 @@ RESEND_FROM = os.getenv("RESEND_FROM", "")
 # Timezone handling
 if tz := os.getenv("TZ"):
     os.environ["TZ"] = tz
+
 try:
     time.tzset()
 except Exception:
@@ -49,15 +50,16 @@ TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 BAN_RE = re.compile(r"Ban\s+([^\s]+)")
 UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
 FOUND_RE = re.compile(r"Found\b")
-INTERVAL_RE = re.compile(r"^(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?$")
+INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
 
 class DataCollector:
-    """数据收集和缓存类"""
+    """数据收集类和缓存"""
+    
     def __init__(self, cache_path: str):
         self.cache_path = cache_path
-        self.data = self.load_cache()
-
-    def load_cache(self) -> Dict:
+        self.data = self._load_cache()
+    
+    def _load_cache(self) -> Dict:
         """从缓存文件加载数据"""
         try:
             if os.path.exists(self.cache_path):
@@ -69,409 +71,440 @@ class DataCollector:
             'ban_events': [],      # [(timestamp, ip), ...]
             'unban_events': [],    # [(timestamp, ip), ...]
             'found_events': [],    # [(timestamp, ip), ...]
-            'last_processed': datetime.now() - timedelta(minutes=10)
+            'last_position': 0,    # 上次读取的文件位置
+            'last_inode': None,    # 上次读取的文件inode
         }
-
-    def save_cache(self):
+    
+    def _save_cache(self):
         """保存数据到缓存文件"""
         try:
-            # 确保目录存在
-            cache_dir = os.path.dirname(self.cache_path)
-            if cache_dir:  # 防止空路径
-                os.makedirs(cache_dir, exist_ok=True)
             with open(self.cache_path, 'wb') as f:
                 pickle.dump(self.data, f)
         except Exception as e:
-            print(f"[ERROR] 保存缓存失败: {e}")
-
-    def collect_new_data(self, log_path: str, since: datetime = None):
-        """收集新的日志数据"""
-        # 如果没有指定开始时间，使用上次处理的时间
-        if since is None:
-            since = self.data.get('last_processed')
-            if since is None:
-                since = datetime.now() - timedelta(minutes=10)
-        
-        now = datetime.now()
-        
-        # 确保 since 不会比 now 更新
-        if since > now:
-            since = now - timedelta(minutes=5)
-
+            print(f"[WARN] 保存缓存失败: {e}")
+    
+    def _parse_timestamp(self, ts_str: str) -> datetime:
+        """解析时间戳"""
+        return datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+    
+    def _get_file_inode(self, filepath: str) -> int:
+        """获取文件inode"""
         try:
-            ban_ips, unban_ips, found_ips, _ = parse_log_window(log_path, since, now)
-        except Exception as e:
-            print(f"[ERROR] 解析日志文件失败: {e}")
+            return os.stat(filepath).st_ino
+        except:
+            return None
+    
+    def collect_data(self, log_path: str):
+        """收集日志数据"""
+        if not os.path.exists(log_path):
+            print(f"[ERROR] 日志文件不存在: {log_path}")
             return
-
-        # 添加到缓存数据中
-        for ip in ban_ips:
-            self.data['ban_events'].append((since, ip))  # 使用实际时间窗口的开始时间
-        for ip in unban_ips:
-            self.data['unban_events'].append((since, ip))
-        for ip in found_ips:
-            self.data['found_events'].append((since, ip))
-
-        # 更新最后处理时间
-        self.data['last_processed'] = now
-
-        # 清理过期数据（保留比报告间隔长一些的数据）
-        self.cleanup_old_data(timedelta(days=1))  # 保留1天的数据
-
+        
+        current_inode = self._get_file_inode(log_path)
+        
+        # 检查文件是否被轮转
+        if self.data['last_inode'] and current_inode != self.data['last_inode']:
+            print("[INFO] 检测到日志文件轮转，重置读取位置")
+            self.data['last_position'] = 0
+        
+        self.data['last_inode'] = current_inode
+        
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                # 跳转到上次读取的位置
+                f.seek(self.data['last_position'])
+                
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # 解析时间戳
+                    ts_match = TS_RE.match(line)
+                    if not ts_match:
+                        continue
+                    
+                    try:
+                        timestamp = self._parse_timestamp(ts_match.group(1))
+                    except:
+                        continue
+                    
+                    # 检查Ban事件
+                    if ban_match := BAN_RE.search(line):
+                        ip = ban_match.group(1)
+                        self.data['ban_events'].append((timestamp, ip))
+                    
+                    # 检查Unban事件
+                    elif unban_match := UNBAN_RE.search(line):
+                        ip = unban_match.group(1)
+                        self.data['unban_events'].append((timestamp, ip))
+                    
+                    # 检查Found事件
+                    elif FOUND_RE.search(line):
+                        # 尝试从行中提取IP地址
+                        ip_match = re.search(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', line)
+                        ip = ip_match.group(0) if ip_match else "unknown"
+                        self.data['found_events'].append((timestamp, ip))
+                
+                # 更新文件读取位置
+                self.data['last_position'] = f.tell()
+        
+        except Exception as e:
+            print(f"[ERROR] 读取日志文件失败: {e}")
+        
         # 保存缓存
-        self.save_cache()
+        self._save_cache()
+    
+    def get_events_in_window(self, start_time: datetime, end_time: datetime) -> Dict:
+        """获取指定时间窗口内的事件"""
+        ban_events = [(ts, ip) for ts, ip in self.data['ban_events'] 
+                      if start_time <= ts <= end_time]
+        unban_events = [(ts, ip) for ts, ip in self.data['unban_events'] 
+                        if start_time <= ts <= end_time]
+        found_events = [(ts, ip) for ts, ip in self.data['found_events'] 
+                        if start_time <= ts <= end_time]
+        
+        return {
+            'ban_events': ban_events,
+            'unban_events': unban_events,
+            'found_events': found_events
+        }
+    
+    def check_log_file_status(self, log_path: str, start_time: datetime, end_time: datetime) -> Dict:
+        """
+        检查日志文件在指定时间窗口内的状态
+        返回：
+        {
+            'has_new_entries': bool,  # 是否有新条目
+            'total_lines': int,       # 新条目总数
+            'last_entry_time': datetime  # 最后一条条目时间
+        }
+        """
+        result = {
+            'has_new_entries': False,
+            'total_lines': 0,
+            'last_entry_time': None
+        }
+        
+        if not os.path.exists(log_path):
+            print(f"[ERROR] 日志文件不存在: {log_path}")
+            return result
+        
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                lines_in_window = []
+                last_valid_time = None
+                
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    # 解析时间戳
+                    ts_match = TS_RE.match(line)
+                    if not ts_match:
+                        continue
+                    
+                    try:
+                        timestamp = self._parse_timestamp(ts_match.group(1))
+                        last_valid_time = timestamp
+                        
+                        # 检查是否在时间窗口内
+                        if start_time <= timestamp <= end_time:
+                            lines_in_window.append((timestamp, line))
+                    except:
+                        continue
+                
+                result['has_new_entries'] = len(lines_in_window) > 0
+                result['total_lines'] = len(lines_in_window)
+                result['last_entry_time'] = last_valid_time
+                
+                if lines_in_window:
+                    # 获取时间窗口内最后一条记录的时间
+                    result['last_entry_time'] = max(ts for ts, _ in lines_in_window)
+        
+        except Exception as e:
+            print(f"[ERROR] 检查日志文件状态失败: {e}")
+        
+        return result
+    
+    def cleanup_old_events(self, cutoff_time: datetime):
+        """清理过期事件"""
+        self.data['ban_events'] = [(ts, ip) for ts, ip in self.data['ban_events'] 
+                                   if ts >= cutoff_time]
+        self.data['unban_events'] = [(ts, ip) for ts, ip in self.data['unban_events'] 
+                                     if ts >= cutoff_time]
+        self.data['found_events'] = [(ts, ip) for ts, ip in self.data['found_events'] 
+                                     if ts >= cutoff_time]
+        self._save_cache()
 
-        if ban_ips or unban_ips or found_ips:
-            print(f"[INFO] 收集数据完成: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
-        else:
-            print(f"[DEBUG] 本次收集无新数据 (检查时间: {since} - {now})")
+def parse_interval(interval_str: str) -> int:
+    """解析时间间隔字符串，返回秒数"""
+    match = INTERVAL_RE.match(interval_str)
+    if not match:
+        raise ValueError(f"Invalid interval format: {interval_str}")
+    
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    
+    return hours * 3600 + minutes * 60 + seconds
 
-    def cleanup_old_data(self, keep_duration: timedelta):
-        """清理过期数据"""
-        cutoff = datetime.now() - keep_duration
-        original_ban_count = len(self.data['ban_events'])
-        original_unban_count = len(self.data['unban_events'])
-        original_found_count = len(self.data['found_events'])
-
-        self.data['ban_events'] = [(ts, ip) for ts, ip in self.data['ban_events'] if ts > cutoff]
-        self.data['unban_events'] = [(ts, ip) for ts, ip in self.data['unban_events'] if ts > cutoff]
-        self.data['found_events'] = [(ts, ip) for ts, ip in self.data['found_events'] if ts > cutoff]
-
-        cleaned_ban = original_ban_count - len(self.data['ban_events'])
-        cleaned_unban = original_unban_count - len(self.data['unban_events'])
-        cleaned_found = original_found_count - len(self.data['found_events'])
-
-        if cleaned_ban > 0 or cleaned_unban > 0 or cleaned_found > 0:
-            print(f"[DEBUG] 清理过期数据: Ban={cleaned_ban}, Unban={cleaned_unban}, Found={cleaned_found}")
-
-    def get_report_data(self, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
-        """获取指定时间范围内的报告数据"""
-        ban_ips = [ip for ts, ip in self.data['ban_events'] if start <= ts <= end]
-        unban_ips = [ip for ts, ip in self.data['unban_events'] if start <= ts <= end]
-        found_ips = [ip for ts, ip in self.data['found_events'] if start <= ts <= end]
-        fails_count = len(found_ips)
-        return ban_ips, unban_ips, found_ips, fails_count
-
-def parse_interval(s: str) -> timedelta:
-    interval_match = INTERVAL_RE.match(s.strip())
-    if not interval_match:
-        raise ValueError(f"Invalid INTERVAL: '{s}'. Use forms like '30m', '15m', '45s'.")
-    h = int(interval_match.groupdict().get("h") or 0)
-    m_ = int(interval_match.groupdict().get("m") or 0)
-    s_ = int(interval_match.groupdict().get("s") or 0)
-    if h == 0 and m_ == 0 and s_ == 0:
-        raise ValueError(f"Invalid INTERVAL: '{s}'. Must include h/m/s.")
-    return timedelta(hours=h, minutes=m_, seconds=s_)
-
-def parse_log_window(path: str, start: datetime, end: datetime) -> Tuple[List[str], List[str], List[str], int]:
+def determine_status_type(ban_count: int, unban_count: int, found_count: int, 
+                         log_status: Dict) -> Dict:
     """
-    解析指定时间窗口内的日志
+    根据事件数量和日志状态确定报告类型
+    返回：
+    {
+        'report_type': 'normal' | 'status_normal' | 'status_error',
+        'status_message': str,
+        'log_file_status': str,
+        'status_detail': str
+    }
     """
-    ban_ips: List[str] = []
-    unban_ips: List[str] = []
-    found_ips: List[str] = []
-    fails = 0
-
-    if not os.path.exists(path):
-        return ban_ips, unban_ips, found_ips, fails
-
-    with open(path, "r", errors="ignore") as f:
-        for line in f:
-            ts_match = TS_RE.match(line)
-            if not ts_match:
-                continue
-            ts_str = ts_match.group(1)
-            try:
-                ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                try:
-                    ts = datetime.fromisoformat(ts_str)
-                except Exception:
-                    continue
-            if not (start <= ts <= end):
-                continue
-
-            if match_ban := BAN_RE.search(line):
-                ip = match_ban.group(1)
-                ban_ips.append(ip)
-            elif match_unban := UNBAN_RE.search(line):
-                ip = match_unban.group(1)
-                unban_ips.append(ip)
-            elif FOUND_RE.search(line):
-                parts = line.split()
-                for idx, w in enumerate(parts):
-                    if w == "Found" and idx + 1 < len(parts):
-                        found_ips.append(parts[idx + 1])
-                        break
-                fails += 1
-
-    return ban_ips, unban_ips, found_ips, fails
-
-def build_report(start: datetime, end: datetime,
-                ban_ips: List[str],
-                unban_ips: List[str],
-                found_ips: List[str],
-                fails: int,
-                top_n: int) -> str:
-    uniq_ban = sorted(set(ban_ips))
-    uniq_unban = sorted(set(unban_ips))
-    uniq_fails = sorted(set(found_ips))
-
-    # Top N IPs by Found occurrences
-    top_fails = Counter(found_ips).most_common(top_n)
-
-    lines = []
-    lines.append(f"时间范围: {start} - {end}")
-    lines.append("")
-    lines.append(f"Ban IP 数量: {len(uniq_ban)}")
-    lines.append(f"Unban IP 数量: {len(uniq_unban)}")
-    lines.append(f"失败尝试次数(Found): {fails}")
-    lines.append("")
-    lines.append("Ban IP List:")
-    if uniq_ban:
-        for ip in uniq_ban:
-            lines.append(f"  - {ip}")
+    # 如果有任何事件，使用正常报告
+    if ban_count > 0 or unban_count > 0 or found_count > 0:
+        return {
+            'report_type': 'normal',
+            'status_message': '',
+            'log_file_status': '',
+            'status_detail': ''
+        }
+    
+    # 无事件时，检查日志文件状态
+    if log_status['has_new_entries']:
+        # 有新日志条目但无匹配事件
+        return {
+            'report_type': 'status_normal',
+            'status_message': '服务状态正常',
+            'log_file_status': '日志文件正常',
+            'status_detail': f'没有发现新的拦截内容（检查了 {log_status["total_lines"]} 条日志记录）'
+        }
     else:
-        lines.append("  - (无)")
-    lines.append("")
-    lines.append("Unban IP List:")
-    if uniq_unban:
-        for ip in uniq_unban:
-            lines.append(f"  - {ip}")
-    else:
-        lines.append("  - (无)")
-    lines.append("")
-    if top_fails:
-        lines.append(f"失败尝试次数最多的{top_n}个IP:")
-        for ip, cnt in top_fails:
-            lines.append(f"  - {ip} ({cnt})")
-    lines.append("")
-    return "\n".join(lines)
+        # 无新日志条目
+        return {
+            'report_type': 'status_error',
+            'status_message': '服务状态异常',
+            'log_file_status': '日志文件没有新内容',
+            'status_detail': '请检查容器访问日志文件fail2ban.log的相关配置'
+        }
 
-def build_html_report(start: datetime, end: datetime,
-                     ban_ips: List[str],
-                     unban_ips: List[str],
-                     found_ips: List[str],
-                     fails: int,
-                     top_n: int) -> str:
-    """
-    Build HTML report using Template class
-    """
-    from string import Template
-    uniq_ban = sorted(set(ban_ips))
-    uniq_unban = sorted(set(unban_ips))
-    uniq_fails = sorted(set(found_ips))
-    top_fails = Counter(found_ips).most_common(top_n)
-
-    # Read HTML template
-    template_path = os.path.join(os.path.dirname(__file__), "report-template.html")
+def generate_report_html(ban_ips: List[str], unban_ips: List[str], 
+                        found_counter: Counter, start_time: datetime, 
+                        end_time: datetime) -> str:
+    """生成HTML报告"""
     try:
-        with open(template_path, "r", encoding="utf-8") as f:
-            template_content = f.read()
-    except FileNotFoundError:
-        # Fallback template if file not found
-        template_content = """
+        with open('/app/report-template.html', 'r', encoding='utf-8') as f:
+            template = f.read()
+    except:
+        # 如果模板文件不存在，使用简单的HTML
+        template = """
         <html>
         <body>
-        <h1>$SUBJECT_PREFIX Fail2Ban IP拦截报告</h1>
-        <p>时间范围: $start - $end</p>
-        <p>Ban IP 数量: $ban_count</p>
-        <p>Unban IP 数量: $unban_count</p>
-        <p>失败尝试计数: $fail_count</p>
-        <h3>Ban IP 列表:</h3>
-        <p>$ban_ips</p>
-        <h3>Unban IP 列表:</h3>
-        <p>$unban_ips</p>
-        <h3>失败尝试最多的前$TOP_N个IP:</h3>
-        <p>IP: $top_fail_ips</p>
-        <p>次数: $top_fail_count</p>
+        <h2>Fail2Ban 报告</h2>
+        <p>时间范围: {{start_time}} - {{end_time}}</p>
+        <h3>Ban IP ({{ban_count}})</h3>
+        <ul>{{ban_list}}</ul>
+        <h3>Unban IP ({{unban_count}})</h3>
+        <ul>{{unban_list}}</ul>
+        <h3>失败尝试 Top {{top_n}}</h3>
+        <ul>{{found_list}}</ul>
         </body>
         </html>
         """
+    
+    # 生成Ban IP列表
+    ban_list = "".join([f"<li>{ip}</li>" for ip in ban_ips]) if ban_ips else "<li>无</li>"
+    
+    # 生成Unban IP列表
+    unban_list = "".join([f"<li>{ip}</li>" for ip in unban_ips]) if unban_ips else "<li>无</li>"
+    
+    # 生成失败尝试Top N列表
+    top_found = found_counter.most_common(TOP_N)
+    found_list = "".join([f"<li>{ip}: {count} 次</li>" for ip, count in top_found]) if top_found else "<li>无</li>"
+    
+    # 替换模板变量
+    html = template.replace("{{start_time}}", start_time.strftime("%Y-%m-%d %H:%M:%S"))
+    html = html.replace("{{end_time}}", end_time.strftime("%Y-%m-%d %H:%M:%S"))
+    html = html.replace("{{ban_count}}", str(len(ban_ips)))
+    html = html.replace("{{unban_count}}", str(len(unban_ips)))
+    html = html.replace("{{ban_list}}", ban_list)
+    html = html.replace("{{unban_list}}", unban_list)
+    html = html.replace("{{found_list}}", found_list)
+    html = html.replace("{{top_n}}", str(TOP_N))
+    
+    return html
 
-    # Format IP lists for display
-    ban_ips_str = "<br/>".join(uniq_ban) if uniq_ban else "无"
-    unban_ips_str = "<br/>".join(uniq_unban) if uniq_unban else "无"
-    # Format top fail IPs and counts with line breaks
-    if top_fails:
-        counts_html = "<br/>".join(str(cnt) for _, cnt in top_fails)
-        ips_html = "<br/>".join(ip for ip, _ in top_fails)
-    else:
-        counts_html = "无"
-        ips_html = "无"
+def generate_status_html(status_info: Dict, start_time: datetime, end_time: datetime) -> str:
+    """生成状态报告HTML"""
+    try:
+        # 尝试读取项目中的status-template.html
+        template_paths = ['/app/status-template.html', '/home/ubuntu/status-template.html']
+        template = None
+        
+        for path in template_paths:
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    template = f.read()
+                    break
+            except:
+                continue
+        
+        if not template:
+            raise FileNotFoundError("No template found")
+            
+    except:
+        # 如果模板文件不存在，使用简单的HTML
+        template = """
+        <html>
+        <body>
+        <h2>{{SUBJECT_PREFIX}} 服务状态报告</h2>
+        <p>时间范围: {{start}} - {{end}}</p>
+        <h3>{{status_type}}</h3>
+        <p>{{log_file_status}}</p>
+        <p>{{status_detail}}</p>
+        </body>
+        </html>
+        """
+    
+    # 替换模板变量
+    html = template.replace("{{SUBJECT_PREFIX}}", SUBJECT_PREFIX)
+    html = html.replace("{{start}}", start_time.strftime("%Y-%m-%d %H:%M:%S"))
+    html = html.replace("{{end}}", end_time.strftime("%Y-%m-%d %H:%M:%S"))
+    html = html.replace("{{status_type}}", status_info['status_message'])
+    html = html.replace("{{log_file_status}}", status_info['log_file_status'])
+    html = html.replace("{{status_detail}}", status_info['status_detail'])
+    
+    return html
 
-    # Use Template class for safe substitution
-    template_obj = Template(template_content)
-    html_content = template_obj.safe_substitute(
-        SUBJECT_PREFIX=SUBJECT_PREFIX,
-        start=start.strftime('%Y-%m-%d %H:%M:%S'),
-        end=end.strftime('%Y-%m-%d %H:%M:%S'),
-        TOP_N=top_n,
-        ban_count=len(uniq_ban),
-        unban_count=len(uniq_unban),
-        fail_count=len(uniq_fails),
-        ban_ips=ban_ips_str,
-        unban_ips=unban_ips_str,
-        top_fail_count=counts_html,
-        top_fail_ips=ips_html
-    )
-    return html_content
+def send_email_smtp(subject: str, html_body: str):
+    """通过SMTP发送邮件"""
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From'] = SMTP_FROM
+    msg['To'] = ', '.join(MAIL_TO)
+    
+    html_part = MIMEText(html_body, 'html', 'utf-8')
+    msg.attach(html_part)
+    
+    context = ssl.create_default_context()
+    
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        if SMTP_TLS:
+            server.starttls(context=context)
+        server.login(SMTP_USER, SMTP_PASS)
+        server.send_message(msg)
 
-def send_mail_smtp(subject: str, body: str, html_body: str = None):
-    if not MAIL_TO:
-        print("[WARN] MAIL_TO not set; skip sending.")
-        return
-
-    # Create multipart message
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
-    msg["To"] = ", ".join(MAIL_TO)
-
-    # Add text part
-    text_part = MIMEText(body, "plain", "utf-8")
-    msg.attach(text_part)
-
-    # Add HTML part if provided
-    if html_body:
-        html_part = MIMEText(html_body, "html", "utf-8")
-        msg.attach(html_part)
-
-    if SMTP_PORT == 465:
-        context = ssl.create_default_context()
-        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context) as server:
-            if SMTP_USER:
-                server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, MAIL_TO, msg.as_string())
-    else:
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-            if SMTP_TLS:
-                server.starttls(context=ssl.create_default_context())
-            if SMTP_USER:
-                server.login(SMTP_USER, SMTP_PASS)
-            server.sendmail(SMTP_FROM, MAIL_TO, msg.as_string())
-
-def send_mail_resend(subject: str, body: str, html_body: str = None):
+def send_email_resend(subject: str, html_body: str):
+    """通过Resend API发送邮件"""
     if not requests:
-        raise RuntimeError("requests not available; cannot use Resend.")
-    if not MAIL_TO:
-        print("[WARN] MAIL_TO not set; skip sending.")
-        return
-    if not RESEND_API_KEY or not RESEND_FROM:
-        raise RuntimeError("RESEND_API_KEY / RESEND_FROM not set.")
-
+        raise Exception("requests library not available")
+    
     url = "https://api.resend.com/emails"
-    payload = {
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
         "from": RESEND_FROM,
         "to": MAIL_TO,
         "subject": subject,
-        "text": body,
+        "html": html_body
     }
-    # Add HTML content if provided
-    if html_body:
-        payload["html"] = html_body
+    
+    response = requests.post(url, headers=headers, json=data)
+    response.raise_for_status()
 
-    headers = {
-        "Authorization": f"Bearer {RESEND_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=20)
-    if resp.status_code >= 300:
-        raise RuntimeError(f"Resend API error: {resp.status_code} {resp.text}")
-
-def send_report(collector: DataCollector, now: datetime, interval: timedelta, is_first_run: bool = False):
-    """发送报告邮件"""
-    start = now - interval
-    ban_ips, unban_ips, found_ips, fails = collector.get_report_data(start, now)
-
-    # Build both text and HTML reports
-    text_report = build_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
-    html_report = build_html_report(start, now, ban_ips, unban_ips, found_ips, fails, TOP_N)
-
-    report_type = "首次运行" if is_first_run else "定期"
-    subject = f"{SUBJECT_PREFIX} Fail2Ban {report_type}报告 {now.strftime('%Y-%m-%d %H:%M:%S')}"
-
-    print(f"\n=== {report_type}报告开始 ===\n" + text_report + f"\n=== {report_type}报告结束 ===\n")
-
+def send_email(subject: str, html_body: str):
+    """发送邮件"""
     try:
-        if MAIL_PROVIDER == "smtp":
-            send_mail_smtp(subject, text_report, html_report)
-        elif MAIL_PROVIDER == "resend":
-            send_mail_resend(subject, text_report, html_report)
+        if MAIL_PROVIDER == "resend":
+            send_email_resend(subject, html_body)
         else:
-            raise ValueError(f"Unknown MAIL_PROVIDER: {MAIL_PROVIDER}")
-        print(f"[INFO] {report_type}报告邮件发送成功")
+            send_email_smtp(subject, html_body)
+        print(f"[INFO] 邮件发送成功: {subject}")
     except Exception as e:
-        print(f"[ERROR] {report_type}报告邮件发送失败: {e}")
+        print(f"[ERROR] 邮件发送失败: {e}")
 
 def main():
-    interval = parse_interval(INTERVAL_STR)
+    """主函数"""
+    print(f"[INFO] Fail2Ban Reporter 启动")
+    print(f"[INFO] 日志路径: {LOG_PATH}")
+    print(f"[INFO] 报告间隔: {INTERVAL_STR}")
+    print(f"[INFO] 收集间隔: {COLLECT_INTERVAL}秒")
+    print(f"[INFO] 邮件提供商: {MAIL_PROVIDER}")
+    print(f"[INFO] 收件人: {', '.join(MAIL_TO)}")
+    
+    # 解析间隔
+    try:
+        interval_seconds = parse_interval(INTERVAL_STR)
+        collect_interval_seconds = COLLECT_INTERVAL
+    except ValueError as e:
+        print(f"[ERROR] {e}")
+        return
+    
+    # 初始化数据收集器
     collector = DataCollector(DATA_CACHE_PATH)
     
-    print(f"[INFO] LOG_PATH={LOG_PATH}")
-    print(f"[INFO] INTERVAL={interval}")
-    print(f"[INFO] COLLECT_INTERVAL={COLLECT_INTERVAL}s")
-    print(f"[INFO] DATA_CACHE_PATH={DATA_CACHE_PATH}")
-    print(f"[INFO] MAIL_PROVIDER={MAIL_PROVIDER}")
-
-    now = datetime.now()
-    
-    # 检查是否是首次运行
-    is_first_run = not os.path.exists(DATA_CACHE_PATH) or len(collector.data.get('ban_events', [])) == 0
-    
-    if is_first_run:
-        print(f"[INFO] 首次运行检测到，准备发送初始报告")
-        
-        # 首次运行：收集最近的历史数据 (默认1小时，可以根据需要调整)
-        history_window = timedelta(hours=1)
-        history_start = now - history_window
-        
-        try:
-            # 手动收集历史数据
-            collector.collect_new_data(LOG_PATH, history_start)
-            
-            # 立即发送首次报告
-            print(f"[INFO] 发送首次运行报告 (时间窗口: {history_window})")
-            send_report(collector, now, history_window, is_first_run=True)
-            
-        except Exception as e:
-            print(f"[ERROR] 首次运行处理失败: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        # 设置下次报告时间
-        last_report_time = now
-    else:
-        print(f"[INFO] 继续运行模式")
-        # 正常运行：设置上次报告时间为间隔之前，这样很快就会发送下一次报告
-        last_report_time = now - interval
-    
-    print(f"[INFO] 服务启动完成，下次报告时间: {last_report_time + interval}")
-
     # 主循环
     while True:
-        current_time = datetime.now()
         try:
-            # 每次循环都收集增量数据
-            collector.collect_new_data(LOG_PATH)
-
-            # 检查是否到了发送报告的时间
-            if current_time - last_report_time >= interval:
-                print(f"[INFO] 准备发送定期报告 (上次报告: {last_report_time})")
-                send_report(collector, current_time, interval)
-                last_report_time = current_time
-                print(f"[INFO] 定期报告发送完成，下次报告时间: {last_report_time + interval}")
+            # 收集数据
+            collector.collect_data(LOG_PATH)
+            
+            # 计算时间窗口
+            end_time = datetime.now(timezone.utc)
+            start_time = end_time - timedelta(seconds=interval_seconds)
+            
+            # 获取时间窗口内的事件
+            events = collector.get_events_in_window(start_time, end_time)
+            
+            # 提取IP列表
+            ban_ips = [ip for _, ip in events['ban_events']]
+            unban_ips = [ip for _, ip in events['unban_events']]
+            found_ips = [ip for _, ip in events['found_events']]
+            found_counter = Counter(found_ips)
+            
+            # 检查日志文件状态（用于无内容状态汇报）
+            log_status = collector.check_log_file_status(LOG_PATH, start_time, end_time)
+            
+            # 确定报告类型
+            status_info = determine_status_type(len(ban_ips), len(unban_ips), 
+                                              len(found_ips), log_status)
+            
+            # 生成报告和发送邮件
+            if status_info['report_type'] == 'normal':
+                # 正常报告（有事件）
+                html_body = generate_report_html(ban_ips, unban_ips, found_counter, 
+                                               start_time, end_time)
+                subject = f"{SUBJECT_PREFIX} 报告 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                print(f"[INFO] 生成正常报告: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
             else:
-                next_report_in = interval - (current_time - last_report_time)
-                print(f"[DEBUG] 距离下次报告还有: {next_report_in}")
-
+                # 状态报告（无事件）
+                html_body = generate_status_html(status_info, start_time, end_time)
+                if status_info['report_type'] == 'status_normal':
+                    subject = f"{SUBJECT_PREFIX} 状态正常 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    print(f"[INFO] 生成状态正常报告: 日志条目={log_status['total_lines']}")
+                else:
+                    subject = f"{SUBJECT_PREFIX} 状态异常 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    print(f"[INFO] 生成状态异常报告: 无新日志条目")
+            
+            send_email(subject, html_body)
+            
+            # 清理过期事件（保留最近7天的数据）
+            cutoff_time = end_time - timedelta(days=7)
+            collector.cleanup_old_events(cutoff_time)
+            
+            print(f"[INFO] 报告完成，等待 {interval_seconds} 秒...")
+            time.sleep(interval_seconds)
+            
+        except KeyboardInterrupt:
+            print("[INFO] 程序被用户中断")
+            break
         except Exception as e:
-            print(f"[ERROR] 主循环处理失败: {e}")
-            import traceback
-            traceback.print_exc()
-
-        # 等待收集间隔
-        time.sleep(COLLECT_INTERVAL)
+            print(f"[ERROR] 运行时错误: {e}")
+            time.sleep(60)  # 出错时等待1分钟再重试
 
 if __name__ == "__main__":
     main()

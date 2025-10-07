@@ -58,7 +58,7 @@
 ```bash
 # 只读挂载 fail2ban.log 到容器
 docker run -d --name f2b-reporter \
-  -v /var/log/fail2ban.log:/f2btemp/fail2ban.log:ro \ # Linux默认fail2ban日志位置
+  -v /var/log:/f2btemp:ro \
   -e INTERVAL=3h5m \
   -e LOG_PATH=/f2btemp/fail2ban.log \
   -e MAIL_PROVIDER=resend \
@@ -74,7 +74,7 @@ docker run -d --name f2b-reporter \
 ```bash
 # 只读挂载 fail2ban.log 到容器
 container run -d --name f2b-reporter \
-  -v /var/log/fail2ban.log:/f2btemp/fail2ban.log:ro \ # 结合实际情况修改日志位置
+  -v /var/log:/f2btemp:ro \
   -e INTERVAL=3h5m \ 
   -e LOG_PATH=/f2btemp/fail2ban.log \
   -e MAIL_PROVIDER=resend \

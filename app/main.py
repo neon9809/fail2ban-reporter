@@ -289,93 +289,179 @@ def determine_status_type(ban_count: int, unban_count: int, found_count: int,
             'status_detail': '请检查容器访问日志文件fail2ban.log的相关配置'
         }
 
+def load_template(template_name: str) -> str:
+    """
+    加载模板文件，支持多个路径尝试
+    """
+    # 定义可能的模板路径（按优先级排序）
+    possible_paths = [
+        f'/app/{template_name}',  # Docker容器内的标准路径
+        f'./{template_name}',     # 当前目录
+        f'/home/ubuntu/{template_name}',  # 测试环境路径
+        template_name  # 相对路径
+    ]
+    
+    for path in possible_paths:
+        try:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    print(f"[INFO] 成功加载模板: {path}")
+                    return content
+        except Exception as e:
+            print(f"[WARN] 无法读取模板 {path}: {e}")
+            continue
+    
+    # 如果所有路径都失败，返回None
+    print(f"[ERROR] 无法找到模板文件: {template_name}")
+    return None
+
+def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
+    """
+    统一的变量替换函数，所有模板都使用$格式
+    """
+    html = template
+    for var_name, value in variables.items():
+        # 确保变量名以$开头
+        if not var_name.startswith('$'):
+            var_name = f'${var_name}'
+        html = html.replace(var_name, value)
+    
+    return html
+
 def generate_report_html(ban_ips: List[str], unban_ips: List[str], 
                         found_counter: Counter, start_time: datetime, 
                         end_time: datetime) -> str:
     """生成HTML报告"""
-    try:
-        with open('/app/report-template.html', 'r', encoding='utf-8') as f:
-            template = f.read()
-    except:
-        # 如果模板文件不存在，使用简单的HTML
+    
+    # 尝试加载模板
+    template = load_template('report-template.html')
+    
+    if not template:
+        # 使用备用模板
+        print("[WARN] 使用备用report模板")
         template = """
+        <!DOCTYPE html>
         <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Fail2Ban 报告</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .header { background-color: #f0f0f0; padding: 15px; border-radius: 5px; }
+                .content { margin: 20px 0; }
+                .section { margin: 15px 0; }
+                .ip-list { background-color: #fafafa; padding: 10px; border-radius: 3px; }
+            </style>
+        </head>
         <body>
-        <h2>Fail2Ban 报告</h2>
-        <p>时间范围: {{start_time}} - {{end_time}}</p>
-        <h3>Ban IP ({{ban_count}})</h3>
-        <ul>{{ban_list}}</ul>
-        <h3>Unban IP ({{unban_count}})</h3>
-        <ul>{{unban_list}}</ul>
-        <h3>失败尝试 Top {{top_n}}</h3>
-        <ul>{{found_list}}</ul>
+            <div class="header">
+                <h2>$SUBJECT_PREFIX IP拦截报告</h2>
+                <p>时间范围: $start – $end</p>
+            </div>
+            <div class="content">
+                <div class="section">
+                    <h3>Ban IP 数量: $ban_count</h3>
+                    <div class="ip-list">$ban_ips</div>
+                </div>
+                <div class="section">
+                    <h3>Unban IP 数量: $unban_count</h3>
+                    <div class="ip-list">$unban_ips</div>
+                </div>
+                <div class="section">
+                    <h3>失败尝试计数: $fail_count</h3>
+                    <p>计数最高的 $TOP_N 个IP:</p>
+                    <div class="ip-list">
+                        <strong>次数:</strong><br>$top_fail_count<br><br>
+                        <strong>IP地址:</strong><br>$top_fail_ips
+                    </div>
+                </div>
+            </div>
         </body>
         </html>
         """
     
-    # 生成Ban IP列表
-    ban_list = "".join([f"<li>{ip}</li>" for ip in ban_ips]) if ban_ips else "<li>无</li>"
+    # 生成Ban IP列表 - 使用<br>分隔
+    ban_list = "<br>".join(ban_ips) if ban_ips else "无"
     
-    # 生成Unban IP列表
-    unban_list = "".join([f"<li>{ip}</li>" for ip in unban_ips]) if unban_ips else "<li>无</li>"
+    # 生成Unban IP列表 - 使用<br>分隔
+    unban_list = "<br>".join(unban_ips) if unban_ips else "无"
     
     # 生成失败尝试Top N列表
     top_found = found_counter.most_common(TOP_N)
-    found_list = "".join([f"<li>{ip}: {count} 次</li>" for ip, count in top_found]) if top_found else "<li>无</li>"
+    top_fail_ips = "<br>".join([ip for ip, count in top_found]) if top_found else "无"
+    top_fail_count = "<br>".join([str(count) for ip, count in top_found]) if top_found else "0"
     
-    # 替换模板变量
-    html = template.replace("{{start_time}}", start_time.strftime("%Y-%m-%d %H:%M:%S"))
-    html = html.replace("{{end_time}}", end_time.strftime("%Y-%m-%d %H:%M:%S"))
-    html = html.replace("{{ban_count}}", str(len(ban_ips)))
-    html = html.replace("{{unban_count}}", str(len(unban_ips)))
-    html = html.replace("{{ban_list}}", ban_list)
-    html = html.replace("{{unban_list}}", unban_list)
-    html = html.replace("{{found_list}}", found_list)
-    html = html.replace("{{top_n}}", str(TOP_N))
+    # 准备变量字典
+    variables = {
+        'SUBJECT_PREFIX': SUBJECT_PREFIX,
+        'start': start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'end': end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'ban_count': str(len(ban_ips)),
+        'unban_count': str(len(unban_ips)),
+        'ban_ips': ban_list,
+        'unban_ips': unban_list,
+        'fail_count': str(sum(found_counter.values())),
+        'top_fail_ips': top_fail_ips,
+        'top_fail_count': top_fail_count,
+        'TOP_N': str(TOP_N)
+    }
     
-    return html
+    # 使用统一的变量替换函数
+    return replace_template_variables(template, variables)
 
 def generate_status_html(status_info: Dict, start_time: datetime, end_time: datetime) -> str:
     """生成状态报告HTML"""
-    try:
-        # 尝试读取项目中的status-template.html
-        template_paths = ['/app/status-template.html', '/home/ubuntu/status-template.html']
-        template = None
-        
-        for path in template_paths:
-            try:
-                with open(path, 'r', encoding='utf-8') as f:
-                    template = f.read()
-                    break
-            except:
-                continue
-        
-        if not template:
-            raise FileNotFoundError("No template found")
-            
-    except:
-        # 如果模板文件不存在，使用简单的HTML
+    
+    # 尝试加载模板
+    template = load_template('status-template.html')
+    
+    if not template:
+        # 使用备用模板
+        print("[WARN] 使用备用status模板")
         template = """
+        <!DOCTYPE html>
         <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Fail2Ban 状态报告</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 20px; }
+                .header { background-color: #f0f0f0; padding: 15px; border-radius: 5px; }
+                .content { margin: 20px 0; }
+                .status-box { background-color: #fafafa; padding: 15px; border-radius: 5px; border-left: 4px solid #007cba; }
+                .status-normal { border-left-color: #28a745; }
+                .status-error { border-left-color: #dc3545; }
+            </style>
+        </head>
         <body>
-        <h2>{{SUBJECT_PREFIX}} 服务状态报告</h2>
-        <p>时间范围: {{start}} - {{end}}</p>
-        <h3>{{status_type}}</h3>
-        <p>{{log_file_status}}</p>
-        <p>{{status_detail}}</p>
+            <div class="header">
+                <h2>$SUBJECT_PREFIX 服务状态报告</h2>
+                <p>时间范围: $start - $end</p>
+            </div>
+            <div class="content">
+                <div class="status-box">
+                    <h3>$status_type</h3>
+                    <p><strong>$log_file_status</strong></p>
+                    <p>$status_detail</p>
+                </div>
+            </div>
         </body>
         </html>
         """
     
-    # 替换模板变量
-    html = template.replace("{{SUBJECT_PREFIX}}", SUBJECT_PREFIX)
-    html = html.replace("{{start}}", start_time.strftime("%Y-%m-%d %H:%M:%S"))
-    html = html.replace("{{end}}", end_time.strftime("%Y-%m-%d %H:%M:%S"))
-    html = html.replace("{{status_type}}", status_info['status_message'])
-    html = html.replace("{{log_file_status}}", status_info['log_file_status'])
-    html = html.replace("{{status_detail}}", status_info['status_detail'])
+    # 准备变量字典
+    variables = {
+        'SUBJECT_PREFIX': SUBJECT_PREFIX,
+        'start': start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'end': end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'status_type': status_info['status_message'],
+        'log_file_status': status_info['log_file_status'],
+        'status_detail': status_info['status_detail']
+    }
     
-    return html
+    # 使用统一的变量替换函数
+    return replace_template_variables(template, variables)
 
 def send_email_smtp(subject: str, html_body: str):
     """通过SMTP发送邮件"""

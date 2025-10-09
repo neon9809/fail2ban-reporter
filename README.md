@@ -1,9 +1,12 @@
 # Fail2ban Reporter
 
-
 一个可 **Docker 部署** 的极简工具：定时解析 `fail2ban.log`，统计本时段 `Ban / Unban / 失败尝试`，生成报告并通过 **SMTP** 或 **Resend Email API** 发送邮件。支持 **amd64 / arm64** 多架构镜像构建（GitHub Actions）。镜像基于 **python:3.11-alpine**，尽量小。
 
+## 新功能：AbuseIPDB 集成
 
+- **IP 信誉查询**: 可选配置 AbuseIPDB API 密钥，自动查询被封禁 IP 的信誉详情。
+- **智能额度管理**: 查询前自动检查 API 剩余额度，额度不足时将发送邮件通知。
+- **丰富报告内容**: 将 AbuseIPDB 的查询结果以表格形式完整呈现在邮件报告中。
 
 ## 功能
 - 定时（如：`3h5m`）扫描并统计 **过去 N 小时/分钟/秒** 的 fail2ban 日志窗口：
@@ -29,6 +32,7 @@
 | `SUBJECT_PREFIX` | `[Fail2Ban]` | 主题前缀，可选 |
 | `TZ` | `Asia/Shanghai` | 容器时区（可选）|
 | `TOP_N` | `5` | 报告失败尝试次数最多的IP地址数量 默认报告失败尝试次数最多的5个IP地址（可选）|
+| `ABUSEIPDB_API_KEY` | `your_api_key` | (可选) AbuseIPDB 的 API 密钥。如果提供，将查询被封禁 IP 的信誉信息。 |
 
 **[邮件内容样式](https://github.com/neon9809/fail2ban-reporter/blob/main/app/report-template.html)**
 
@@ -67,22 +71,7 @@ docker run -d --name f2b-reporter \
   -e MAIL_TO=admin@domain.com,sec@domain.com \
   -e SUBJECT_PREFIX="[Fail2Ban]" \
   -e TZ=Asia/Shanghai \
-  ghcr.io/neon9809/fail2ban-reporter:latest
-```
-
-### Apple Container
-```bash
-# 只读挂载 fail2ban.log 到容器
-container run -d --name f2b-reporter \
-  -v /var/log:/f2btemp:ro \
-  -e INTERVAL=3h5m \ 
-  -e LOG_PATH=/f2btemp/fail2ban.log \
-  -e MAIL_PROVIDER=resend \
-  -e RESEND_API_KEY=re_xxx \
-  -e RESEND_FROM=no-reply@yourdomain.com \
-  -e MAIL_TO=admin@domain.com,sec@domain.com \
-  -e SUBJECT_PREFIX="[Fail2Ban]" \
-  -e TZ=Asia/Shanghai \
+  -e ABUSEIPDB_API_KEY=your_abuseipdb_api_key_here \
   ghcr.io/neon9809/fail2ban-reporter:latest
 ```
 
@@ -105,6 +94,7 @@ services:
       MAIL_TO: admin@domain.com,sec@domain.com
       SUBJECT_PREFIX: "[Fail2Ban]"
       TZ: Asia/Shanghai
+      ABUSEIPDB_API_KEY: your_abuseipdb_api_key_here # 可选
     volumes:
       - /var/log:/f2btemp:ro
     restart: unless-stopped
@@ -117,8 +107,6 @@ services:
 - **IPv4/IPv6**：当前通过 `Ban ` / `Unban ` 后的第一个非空白字段捕获 IP/网段字符串，通常兼容 IPv6。
 - **日志轮转**：默认仅读当前 `fail2ban.log`。
 - **失败尝试计数**：这里以 fail2ban 的 `Found` 为“失败尝试”。
-- **报表样式**：纯文本。
-
 
 # Fail2ban Reporter 无内容状态汇报功能
 
@@ -177,7 +165,8 @@ def check_log_file_status(self, log_path: str, start_time: datetime, end_time: d
     {
         'has_new_entries': bool,  # 是否有新条目
         'total_lines': int,       # 新条目总数
-        'last_entry_time': datetime  # 最后一条条目时间
+        'last_entry_time
+': datetime  # 最后一条条目时间
     }
     """
 ```
@@ -276,5 +265,4 @@ docker run -d --name f2b-reporter \
 # Credits
 
 本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。[Claude AI](https://claude.ai) (Sonnet 4)完成了针对fail2ban日志轮转机制的内部缓存代码设计。
-
 

@@ -24,6 +24,9 @@ MAIL_TO = [x.strip() for x in os.getenv("MAIL_TO", "").split(",") if x.strip()]
 SUBJECT_PREFIX = os.getenv("SUBJECT_PREFIX", "[Fail2Ban]")
 TOP_N = int(os.getenv("TOP_N", "5"))
 
+# AbuseIPDB config
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
+
 # SMTP config
 SMTP_HOST = os.getenv("SMTP_HOST", "")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
@@ -51,6 +54,59 @@ BAN_RE = re.compile(r"Ban\s+([^\s]+)")
 UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
 FOUND_RE = re.compile(r"Found\b")
 INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+
+def check_abuseipdb_quota(api_key: str) -> int:
+    """检查 AbuseIPDB API 的剩余查询额度"""
+    if not requests:
+        print("[ERROR] requests 库未安装，无法使用 AbuseIPDB 功能")
+        return 0
+    
+    try:
+        headers = {
+            'Key': api_key,
+            'Accept': 'application/json',
+        }
+        # 使用一个保留地址进行虚拟查询，以获取响应头
+        response = requests.get('https://api.abuseipdb.com/api/v2/check', 
+                              headers=headers, 
+                              params={'ipAddress': '127.0.0.1'}, 
+                              timeout=10)
+        remaining = int(response.headers.get('X-RateLimit-Remaining', 0))
+        daily_limit = int(response.headers.get('X-RateLimit-Limit', 0))
+        print(f"[INFO] AbuseIPDB 剩余查询额度: {remaining}/{daily_limit}")
+        return remaining
+    except Exception as e:
+        print(f"[ERROR] 检查 AbuseIPDB 配额失败: {e}")
+        return 0
+
+def get_abuseipdb_report(ip_address: str, api_key: str) -> dict | None:
+    """获取单个 IP 地址的 AbuseIPDB 报告"""
+    if not requests:
+        print("[ERROR] requests 库未安装，无法使用 AbuseIPDB 功能")
+        return None
+    
+    try:
+        headers = {
+            'Key': api_key,
+            'Accept': 'application/json',
+        }
+        params = {
+            'ipAddress': ip_address,
+            'maxAgeInDays': '90',
+            'verbose': '' # 获取详细报告
+        }
+        response = requests.get('https://api.abuseipdb.com/api/v2/check', 
+                              headers=headers, 
+                              params=params, 
+                              timeout=10)
+        if response.status_code == 200:
+            return response.json().get('data', {})
+        else:
+            print(f"[ERROR] AbuseIPDB API 请求失败 ({ip_address}): {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        print(f"[ERROR] 获取 AbuseIPDB 报告失败 ({ip_address}): {e}")
+        return None
 
 class DataCollector:
     """数据收集类和缓存"""
@@ -329,9 +385,103 @@ def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
     
     return html
 
+def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
+    """格式化 AbuseIPDB 报告为 HTML 表格"""
+    if not abuseipdb_reports:
+        return ""
+    
+    html = '<h2 style="color: #d9534f; margin-top: 30px;">AbuseIPDB 查询结果</h2>\n'
+    
+    for ip, report in abuseipdb_reports.items():
+        html += f'<h3 style="color: #337ab7; margin-top: 20px;">IP地址: {ip}</h3>\n'
+        html += '<table border="1" style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">\n'
+        html += '<thead>\n'
+        html += '<tr style="background-color: #f2f2f2;">\n'
+        html += '<th style="padding: 8px; text-align: left; width: 30%;">字段</th>\n'
+        html += '<th style="padding: 8px; text-align: left;">值</th>\n'
+        html += '</tr>\n'
+        html += '</thead>\n'
+        html += '<tbody>\n'
+        
+        # 按照重要性排序字段
+        field_order = [
+            'abuseConfidenceScore', 'isWhitelisted', 'countryCode', 'countryName',
+            'usageType', 'isp', 'domain', 'totalReports', 'numDistinctUsers',
+            'lastReportedAt', 'ipAddress', 'isPublic', 'ipVersion', 'isTor'
+        ]
+        
+        # 先显示重要字段
+        for field in field_order:
+            if field in report:
+                value = report[field]
+                html += f'<tr>\n'
+                html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{field}</td>\n'
+                html += f'<td style="padding: 8px; border: 1px solid #ddd;">{format_field_value(value)}</td>\n'
+                html += f'</tr>\n'
+        
+        # 显示其他字段
+        for field, value in report.items():
+            if field not in field_order and field != 'reports':
+                html += f'<tr>\n'
+                html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{field}</td>\n'
+                html += f'<td style="padding: 8px; border: 1px solid #ddd;">{format_field_value(value)}</td>\n'
+                html += f'</tr>\n'
+        
+        # 如果有详细报告，单独显示
+        if 'reports' in report and report['reports']:
+            html += f'<tr>\n'
+            html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">详细报告</td>\n'
+            html += f'<td style="padding: 8px; border: 1px solid #ddd;">\n'
+            html += format_reports_list(report['reports'])
+            html += f'</td>\n'
+            html += f'</tr>\n'
+        
+        html += '</tbody>\n'
+        html += '</table>\n'
+    
+    return html
+
+def format_field_value(value) -> str:
+    """格式化字段值"""
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    elif isinstance(value, list):
+        if not value:
+            return "无"
+        return "<br>".join(str(item) for item in value)
+    elif value is None:
+        return "无"
+    else:
+        return str(value)
+
+def format_reports_list(reports: List) -> str:
+    """格式化报告列表"""
+    if not reports:
+        return "无详细报告"
+    
+    html = '<div style="max-height: 200px; overflow-y: auto;">\n'
+    for i, report in enumerate(reports[:5]):  # 只显示前5个报告
+        html += f'<div style="margin-bottom: 10px; padding: 5px; background-color: #f9f9f9; border-left: 3px solid #d9534f;">\n'
+        html += f'<strong>报告 #{i+1}</strong><br>\n'
+        if 'reportedAt' in report:
+            html += f'时间: {report["reportedAt"]}<br>\n'
+        if 'comment' in report:
+            html += f'描述: {report["comment"]}<br>\n'
+        if 'categories' in report:
+            html += f'类别: {", ".join(map(str, report["categories"]))}<br>\n'
+        if 'reporterCountryName' in report:
+            html += f'报告者国家: {report["reporterCountryName"]}<br>\n'
+        html += '</div>\n'
+    
+    if len(reports) > 5:
+        html += f'<p><em>... 还有 {len(reports) - 5} 个报告</em></p>\n'
+    
+    html += '</div>\n'
+    return html
+
 def generate_report_html(ban_ips: List[str], unban_ips: List[str], 
                         found_counter: Counter, start_time: datetime, 
-                        end_time: datetime) -> str:
+                        end_time: datetime, abuseipdb_reports: Dict = None) -> str:
     """生成HTML报告"""
     
     # 尝试加载模板
@@ -376,6 +526,7 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
                         <strong>IP地址:</strong><br>$top_fail_ips
                     </div>
                 </div>
+                $abuseipdb_section
             </div>
         </body>
         </html>
@@ -392,6 +543,11 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
     top_fail_ips = "<br>".join([ip for ip, count in top_found]) if top_found else "无"
     top_fail_count = "<br>".join([str(count) for ip, count in top_found]) if top_found else "0"
     
+    # 生成 AbuseIPDB 报告部分
+    abuseipdb_section = ""
+    if abuseipdb_reports:
+        abuseipdb_section = format_abuseipdb_reports_html(abuseipdb_reports)
+    
     # 准备变量字典
     variables = {
         'SUBJECT_PREFIX': SUBJECT_PREFIX,
@@ -404,7 +560,8 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
         'fail_count': str(sum(found_counter.values())),
         'top_fail_ips': top_fail_ips,
         'top_fail_count': top_fail_count,
-        'TOP_N': str(TOP_N)
+        'TOP_N': str(TOP_N),
+        'abuseipdb_section': abuseipdb_section
     }
     
     # 使用统一的变量替换函数
@@ -478,20 +635,20 @@ def send_email_smtp(subject: str, html_body: str):
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         if SMTP_TLS:
             server.starttls(context=context)
-        server.login(SMTP_USER, SMTP_PASS)
+        if SMTP_USER and SMTP_PASS:
+            server.login(SMTP_USER, SMTP_PASS)
         server.send_message(msg)
 
 def send_email_resend(subject: str, html_body: str):
     """通过Resend API发送邮件"""
     if not requests:
-        raise Exception("requests library not available")
+        raise Exception("requests library is required for Resend API")
     
     url = "https://api.resend.com/emails"
     headers = {
         "Authorization": f"Bearer {RESEND_API_KEY}",
         "Content-Type": "application/json"
     }
-    
     data = {
         "from": RESEND_FROM,
         "to": MAIL_TO,
@@ -521,6 +678,11 @@ def main():
     print(f"[INFO] 收集间隔: {COLLECT_INTERVAL}秒")
     print(f"[INFO] 邮件提供商: {MAIL_PROVIDER}")
     print(f"[INFO] 收件人: {', '.join(MAIL_TO)}")
+    
+    if ABUSEIPDB_API_KEY:
+        print(f"[INFO] AbuseIPDB API 已配置")
+    else:
+        print(f"[INFO] AbuseIPDB API 未配置")
     
     # 解析间隔
     try:
@@ -552,6 +714,26 @@ def main():
             found_ips = [ip for _, ip in events['found_events']]
             found_counter = Counter(found_ips)
             
+            # AbuseIPDB 查询逻辑
+            abuseipdb_reports = {}
+            abuseipdb_quota_insufficient = False
+            
+            if ABUSEIPDB_API_KEY and ban_ips:
+                print("[INFO] 检测到 AbuseIPDB API 密钥，开始查询...")
+                remaining_quota = check_abuseipdb_quota(ABUSEIPDB_API_KEY)
+                
+                if remaining_quota >= len(ban_ips):
+                    print(f"[INFO] 开始查询 {len(ban_ips)} 个IP地址...")
+                    for ip in ban_ips:
+                        report = get_abuseipdb_report(ip, ABUSEIPDB_API_KEY)
+                        if report:
+                            abuseipdb_reports[ip] = report
+                            print(f"[INFO] 成功获取 {ip} 的 AbuseIPDB 报告")
+                        time.sleep(1)  # 遵循API使用礼仪，避免过快请求
+                else:
+                    print(f"[WARN] AbuseIPDB 查询额度不足，跳过查询。需要: {len(ban_ips)}, 剩余: {remaining_quota}")
+                    abuseipdb_quota_insufficient = True
+            
             # 检查日志文件状态（用于无内容状态汇报）
             log_status = collector.check_log_file_status(LOG_PATH, start_time, end_time)
             
@@ -563,9 +745,11 @@ def main():
             if status_info['report_type'] == 'normal':
                 # 正常报告（有事件）
                 html_body = generate_report_html(ban_ips, unban_ips, found_counter, 
-                                               start_time, end_time)
+                                               start_time, end_time, abuseipdb_reports)
                 subject = f"{SUBJECT_PREFIX} 报告 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
                 print(f"[INFO] 生成正常报告: Ban={len(ban_ips)}, Unban={len(unban_ips)}, Found={len(found_ips)}")
+                if abuseipdb_reports:
+                    print(f"[INFO] 包含 {len(abuseipdb_reports)} 个 AbuseIPDB 查询结果")
             else:
                 # 状态报告（无事件）
                 html_body = generate_status_html(status_info, start_time, end_time)
@@ -577,6 +761,18 @@ def main():
                     print(f"[INFO] 生成状态异常报告: 无新日志条目")
             
             send_email(subject, html_body)
+            
+            # 如果 AbuseIPDB 额度不足，发送额外的通知邮件
+            if abuseipdb_quota_insufficient:
+                print("[INFO] 发送 AbuseIPDB 额度不足通知邮件...")
+                quota_status_info = {
+                    'status_message': 'AbuseIPDB 查询额度不足',
+                    'log_file_status': 'API 额度状态',
+                    'status_detail': f'AbuseIPDB API 每日查询额度不足。剩余额度: {remaining_quota}，但需要查询 {len(ban_ips)} 个IP地址。请考虑升级您的 AbuseIPDB 计划或等待额度重置。'
+                }
+                quota_html_body = generate_status_html(quota_status_info, start_time, end_time)
+                quota_subject = f"{SUBJECT_PREFIX} 通知 - AbuseIPDB 额度不足 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                send_email(quota_subject, quota_html_body)
             
             # 清理过期事件（保留最近7天的数据）
             cutoff_time = end_time - timedelta(days=7)

@@ -88,22 +88,11 @@ jobs:
           build-args: |
             VERSION=${{ steps.get_version.outputs.VERSION }}
 
-      - name: Prepare release notes
-        id: notes
-        run: |
-          if [ -f changelog.md ]; then
-            echo "NOTES<<EOF" >> $GITHUB_OUTPUT
-            cat changelog.md >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          else
-            echo "NOTES=" >> $GITHUB_OUTPUT
-          fi
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.get_version.outputs.VERSION }}
           name: ${{ steps.get_version.outputs.VERSION }}
-          body: ${{ steps.notes.outputs.NOTES }}
+          body_path: changelog.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

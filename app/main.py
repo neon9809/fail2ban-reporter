@@ -440,6 +440,7 @@ def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
         html += '</table>\n'
     
     html += '</span></td></tr></table>'    
+    
     return html
 
 def format_field_value(value) -> str:

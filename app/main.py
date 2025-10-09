@@ -390,7 +390,7 @@ def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
     if not abuseipdb_reports:
         return ""
     
-    html = '<h2 style="color: #d9534f; margin-top: 30px;">AbuseIPDB 查询结果</h2>\n'
+    html = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;"> <tr> <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">\n'
     
     for ip, report in abuseipdb_reports.items():
         html += f'<h3 style="color: #337ab7; margin-top: 20px;">IP地址: {ip}</h3>\n'
@@ -438,7 +438,8 @@ def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
         
         html += '</tbody>\n'
         html += '</table>\n'
-    
+        html += '</span></td></tr></table>'
+        
     return html
 
 def format_field_value(value) -> str:

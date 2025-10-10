@@ -393,12 +393,12 @@ def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
     html = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;"> <tr> <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">\n'
     
     for ip, report in abuseipdb_reports.items():
-        html += f'<h3 style="color: #337ab7; margin-top: 20px;">IP地址: {ip}</h3>\n'
-        html += '<table border="1" style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">\n'
+        html += f'<td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><br><span>{ip}</span></td><br>\n'
+        html += '<table border="1" style="border-collapse: collapse; width: 100%; margin-bottom: 1.6rem;">\n'
         html += '<thead>\n'
-        html += '<tr style="background-color: #f2f2f2;">\n'
-        html += '<th style="padding: 8px; text-align: left; width: 30%;">字段</th>\n'
-        html += '<th style="padding: 8px; text-align: left;">值</th>\n'
+        html += '<tr>\n'
+        html += '<th style="padding: 0.8rem; text-align: left; width: 30%;"><strong>字段</strong></th>\n'
+        html += '<th style="padding: 0.8rem; text-align: left;"><strong>值</strong></th>\n'
         html += '</tr>\n'
         html += '</thead>\n'
         html += '<tbody>\n'
@@ -415,23 +415,23 @@ def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
             if field in report:
                 value = report[field]
                 html += f'<tr>\n'
-                html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{field}</td>\n'
-                html += f'<td style="padding: 8px; border: 1px solid #ddd;">{format_field_value(value)}</td>\n'
+                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">{field}</td>\n'
+                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">{format_field_value(value)}</td>\n'
                 html += f'</tr>\n'
         
         # 显示其他字段
         for field, value in report.items():
             if field not in field_order and field != 'reports':
                 html += f'<tr>\n'
-                html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">{field}</td>\n'
-                html += f'<td style="padding: 8px; border: 1px solid #ddd;">{format_field_value(value)}</td>\n'
+                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">{field}</td>\n'
+                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">{format_field_value(value)}</td>\n'
                 html += f'</tr>\n'
         
         # 如果有详细报告，单独显示
         if 'reports' in report and report['reports']:
             html += f'<tr>\n'
-            html += f'<td style="padding: 8px; border: 1px solid #ddd; font-weight: bold;">详细报告</td>\n'
-            html += f'<td style="padding: 8px; border: 1px solid #ddd;">\n'
+            html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">详细报告</td>\n'
+            html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">\n'
             html += format_reports_list(report['reports'])
             html += f'</td>\n'
             html += f'</tr>\n'
@@ -463,7 +463,7 @@ def format_reports_list(reports: List) -> str:
     
     html = '<div style="max-height: 200px; overflow-y: auto;">\n'
     for i, report in enumerate(reports[:5]):  # 只显示前5个报告
-        html += f'<div style="margin-bottom: 10px; padding: 5px; background-color: #f9f9f9; border-left: 3px solid #d9534f;">\n'
+        html += f'<div style="margin-bottom: 1rem; padding: 0.5rem; background-color: #f9f9f9; border-left: 0.3rem solid #d9534f;">\n'
         html += f'<strong>报告 #{i+1}</strong><br>\n'
         if 'reportedAt' in report:
             html += f'时间: {report["reportedAt"]}<br>\n'

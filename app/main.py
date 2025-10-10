@@ -535,10 +535,10 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
         """
     
     # 生成Ban IP列表 - 使用;分隔
-    ban_list = "  ".join(ban_ips) if ban_ips else "无"
+    ban_list = "    ".join(ban_ips) if ban_ips else "无"
     
     # 生成Unban IP列表 - 使用;分隔
-    unban_list = "  ".join(unban_ips) if unban_ips else "无"
+    unban_list = "    ".join(unban_ips) if unban_ips else "无"
     
     # 生成失败尝试Top N列表
     top_found = found_counter.most_common(TOP_N)

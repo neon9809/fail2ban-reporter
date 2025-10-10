@@ -264,5 +264,5 @@ docker run -d --name f2b-reporter \
 
 # Credits
 
-本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.ai)的协助下添加了邮件通知的HTML支持。[Claude AI](https://claude.ai) (Sonnet 4)完成了针对fail2ban日志轮转机制的内部缓存代码设计。
+本项目源代码主要由 [ChatGPT](https://chatgpt.com) 完成，[Perplexity AI](https://perplexity.ai)贡献了IP地址名单生成部分功能与部分代码解释，在[Manus AI](https://manus.im)的协助下添加了邮件通知的HTML支持。[Claude AI](https://claude.ai) (Sonnet 4)完成了针对fail2ban日志轮转机制的内部缓存代码设计。[Manus AI](https://manus.im)完成了两种无内容状态报告的功能以及AbuseIPDB查询与邮件报告的集成。
 

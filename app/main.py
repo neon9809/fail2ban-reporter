@@ -353,6 +353,7 @@ def load_template(template_name: str) -> str:
     possible_paths = [
         f'/app/{template_name}',  # Docker容器内的标准路径
         f'./{template_name}',     # 当前目录
+        f'/home/ubuntu/fail2ban-reporter/app/{template_name}',  # 测试环境路径
         f'/home/ubuntu/{template_name}',  # 测试环境路径
         template_name  # 相对路径
     ]
@@ -386,60 +387,69 @@ def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
     return html
 
 def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
-    """格式化 AbuseIPDB 报告为 HTML 表格"""
+    """格式化 AbuseIPDB 报告为 HTML 表格 - 完整版本（包含所有字段）"""
     if not abuseipdb_reports:
         return ""
     
-    html = '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;"> <tr> <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">\n'
+    # 使用与原模板完全一致的样式结构
+    html = '''<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
+                  <tr>
+                    <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">
+'''
     
+    # 为每个IP生成完整的报告信息
     for ip, report in abuseipdb_reports.items():
-        html += f'<td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><br><span>{ip}</span></td><br>\n'
-        html += '<table border="1" style="border-collapse: collapse; width: 100%; margin-bottom: 1.6rem;">\n'
-        html += '<thead>\n'
-        html += '<tr>\n'
-        html += '<th style="padding: 0.8rem; text-align: left; width: 30%;"><strong>字段</strong></th>\n'
-        html += '<th style="padding: 0.8rem; text-align: left;"><strong>值</strong></th>\n'
-        html += '</tr>\n'
-        html += '</thead>\n'
-        html += '<tbody>\n'
+        # 提取所有字段信息
+        confidence_score = report.get('abuseConfidenceScore', 0)
+        is_whitelisted = "是" if report.get('isWhitelisted', False) else "否"
+        country_code = report.get('countryCode', '未知')
+        country_name = report.get('countryName', '未知')
+        usage_type = report.get('usageType', '未知')  # 用户要求不能省略
+        isp = report.get('isp', '未知')
+        domain = report.get('domain', '未知')
+        total_reports = report.get('totalReports', 0)
+        num_distinct_users = report.get('numDistinctUsers', 0)
+        last_reported_at = report.get('lastReportedAt', '未知')
+        is_public = "是" if report.get('isPublic', False) else "否"
+        ip_version = report.get('ipVersion', '未知')
+        is_tor = "是" if report.get('isTor', False) else "否"
+        hostnames = report.get('hostnames', [])  # 用户要求不能省略
+        hostnames_str = "无" if not hostnames else "<br>".join(hostnames)
         
-        # 按照重要性排序字段
-        field_order = [
-            'abuseConfidenceScore', 'isWhitelisted', 'countryCode', 'countryName',
-            'usageType', 'isp', 'domain', 'totalReports', 'numDistinctUsers',
-            'lastReportedAt', 'ipAddress', 'isPublic', 'ipVersion', 'isTor'
-        ]
+        # 使用简洁但完整的格式展示所有重要字段
+        html += f'''
+<br><strong style="color:#000000;">{ip}</strong><br>
+<span style="color:#565656;">信誉评分: {confidence_score}% | 白名单: {is_whitelisted}</span><br>
+<span style="color:#565656;">国家: {country_name} ({country_code}) | 用途类型: {usage_type}</span><br>
+<span style="color:#565656;">ISP: {isp} | 域名: {domain}</span><br>
+<span style="color:#565656;">总举报数: {total_reports} | 举报用户数: {num_distinct_users}</span><br>
+<span style="color:#565656;">最后举报: {last_reported_at}</span><br>
+<span style="color:#565656;">公网IP: {is_public} | IP版本: {ip_version} | Tor: {is_tor}</span><br>
+<span style="color:#565656;">主机名: {hostnames_str}</span><br>
+'''
         
-        # 先显示重要字段
-        for field in field_order:
-            if field in report:
-                value = report[field]
-                html += f'<tr>\n'
-                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">{field}</td>\n'
-                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">{format_field_value(value)}</td>\n'
-                html += f'</tr>\n'
-        
-        # 显示其他字段
-        for field, value in report.items():
-            if field not in field_order and field != 'reports':
-                html += f'<tr>\n'
-                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">{field}</td>\n'
-                html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">{format_field_value(value)}</td>\n'
-                html += f'</tr>\n'
-        
-        # 如果有详细报告，单独显示
+        # 如果有详细报告，显示最新的几条
         if 'reports' in report and report['reports']:
-            html += f'<tr>\n'
-            html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd; font-weight: bold;">详细报告</td>\n'
-            html += f'<td style="padding: 0.8rem; border: 0.1rem solid #ddd;">\n'
-            html += format_reports_list(report['reports'])
-            html += f'</td>\n'
-            html += f'</tr>\n'
-        
-        html += '</tbody>\n'
-        html += '</table>\n'
+            recent_reports = report['reports'][:3]  # 只显示最新3条
+            html += '<span style="color:#aaaaaa; font-size:0.8rem;">最近举报:</span><br>'
+            for i, r in enumerate(recent_reports, 1):
+                report_time = r.get('reportedAt', '未知时间')[:10]  # 只显示日期部分
+                comment = r.get('comment', '无描述')[:50]  # 限制长度
+                if len(r.get('comment', '')) > 50:
+                    comment += '...'
+                categories = r.get('categories', [])
+                categories_str = ', '.join(map(str, categories)) if categories else '未知'
+                reporter_country = r.get('reporterCountryName', '未知')
+                html += f'<span style="color:#aaaaaa; font-size:0.8rem;">{report_time}: {comment}</span><br>'
+                html += f'<span style="color:#aaaaaa; font-size:0.8rem;">类别: {categories_str} | 举报者: {reporter_country}</span><br>'
+            
+            if len(report['reports']) > 3:
+                html += f'<span style="color:#aaaaaa; font-size:0.8rem;">... 还有 {len(report["reports"]) - 3} 条举报</span><br>'
     
-    html += '</span></td></tr></table>'    
+    # 闭合标签，与原模板结构保持一致
+    html += '''</span></td>
+                  </tr>
+                </table>'''
     
     return html
 
@@ -456,35 +466,10 @@ def format_field_value(value) -> str:
     else:
         return str(value)
 
-def format_reports_list(reports: List) -> str:
-    """格式化报告列表"""
-    if not reports:
-        return "无详细报告"
-    
-    html = '<div style="max-height: 200px; overflow-y: auto;">\n'
-    for i, report in enumerate(reports[:5]):  # 只显示前5个报告
-        html += f'<div style="margin-bottom: 1rem; padding: 0.5rem; background-color: #f9f9f9; border-left: 0.3rem solid #d9534f;">\n'
-        html += f'<strong>报告 #{i+1}</strong><br>\n'
-        if 'reportedAt' in report:
-            html += f'时间: {report["reportedAt"]}<br>\n'
-        if 'comment' in report:
-            html += f'描述: {report["comment"]}<br>\n'
-        if 'categories' in report:
-            html += f'类别: {", ".join(map(str, report["categories"]))}<br>\n'
-        if 'reporterCountryName' in report:
-            html += f'报告者国家: {report["reporterCountryName"]}<br>\n'
-        html += '</div>\n'
-    
-    if len(reports) > 5:
-        html += f'<p><em>... 还有 {len(reports) - 5} 个报告</em></p>\n'
-    
-    html += '</div>\n'
-    return html
-
 def generate_report_html(ban_ips: List[str], unban_ips: List[str], 
                         found_counter: Counter, start_time: datetime, 
                         end_time: datetime, abuseipdb_reports: Dict = None) -> str:
-    """生成HTML报告"""
+    """生成报告HTML"""
     
     # 尝试加载模板
     template = load_template('report-template.html')
@@ -534,11 +519,11 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
         </html>
         """
     
-    # 生成Ban IP列表 - 使用;分隔
-    ban_list = "    ".join(ban_ips) if ban_ips else "无"
+    # 生成Ban IP列表 - 使用空格分隔，与原模板一致
+    ban_list = " ".join(ban_ips) if ban_ips else "无"
     
-    # 生成Unban IP列表 - 使用;分隔
-    unban_list = "    ".join(unban_ips) if unban_ips else "无"
+    # 生成Unban IP列表 - 使用空格分隔，与原模板一致
+    unban_list = " ".join(unban_ips) if unban_ips else "无"
     
     # 生成失败尝试Top N列表
     top_found = found_counter.most_common(TOP_N)

@@ -494,17 +494,17 @@ def determine_status_type(ban_count: int, unban_count: int, found_count: int,
         }
 
 def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
-    """格式化 AbuseIPDB 报告为 HTML"""
+    """格式化 AbuseIPDB 报告为 HTML 表格 - 完整版本（包含所有字段）"""
     if not abuseipdb_reports:
         return ""
     
-    # 使用与原模板一致的结构
-    html = '''
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+    # 使用与原模板完全一致的样式结构
+    html = '''<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
                   <tr>
-                    <td style="padding: 20px 0 0 0;">
-                      <span style="color:#000000; font-size:1.2rem; font-weight:bold;">AbuseIPDB 查询结果</span><br><br><span style="color:#565656;">'''
+                    <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">
+'''
     
+    # 为每个IP生成完整的报告信息
     for ip, report in abuseipdb_reports.items():
         # 提取所有字段信息
         confidence_score = report.get('abuseConfidenceScore', 0)
@@ -573,16 +573,30 @@ def format_field_value(value) -> str:
     else:
         return str(value)
 
-def generate_report_html(ban_ips: List[str], unban_ips: List[str], 
-                        found_counter: Counter, start_time: datetime, 
-                        end_time: datetime, abuseipdb_reports: Dict = None) -> str:
-    """生成报告HTML"""
-    
+def generate_report_html(
+    ban_ips: List[str], 
+    unban_ips: List[str], 
+    found_counter: Counter, 
+    start_time: datetime, 
+    end_time: datetime, 
+    abuseipdb_reports: Dict = None
+) -> str:
+    """生成报告HTML（格式化时带时区信息）"""
+
+    # 获取用户配置的时区
+    tz_str = os.getenv('TZ', 'UTC')
+    try:
+        local_tz = ZoneInfo(tz_str)
+    except Exception:
+        local_tz = timezone.utc
+
+    # UTC转换为本地时区
+    start_time_local = start_time.astimezone(local_tz)
+    end_time_local = end_time.astimezone(local_tz)
+
     # 尝试加载模板
     template = load_template('report-template.html')
-    
     if not template:
-        # 使用备用模板
         print("[WARN] 使用备用report模板")
         template = """
         <!DOCTYPE html>
@@ -625,28 +639,20 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
         </body>
         </html>
         """
-    
-    # 生成Ban IP列表 - 使用空格分隔，与原模板一致
+
+    # 汇总
     ban_list = " ".join(ban_ips) if ban_ips else "无"
-    
-    # 生成Unban IP列表 - 使用空格分隔，与原模板一致
     unban_list = " ".join(unban_ips) if unban_ips else "无"
-    
-    # 生成失败尝试Top N列表
     top_found = found_counter.most_common(TOP_N)
     top_fail_ips = "<br>".join([ip for ip, count in top_found]) if top_found else "无"
     top_fail_count = "<br>".join([str(count) for ip, count in top_found]) if top_found else "0"
-    
-    # 生成 AbuseIPDB 报告部分
-    abuseipdb_section = ""
-    if abuseipdb_reports:
-        abuseipdb_section = format_abuseipdb_reports_html(abuseipdb_reports)
-    
-    # 准备变量字典
+    abuseipdb_section = format_abuseipdb_reports_html(abuseipdb_reports) if abuseipdb_reports else ""
+
+    # 变量模板（带时区名，比如 CST/Asia/Shanghai）
     variables = {
         'SUBJECT_PREFIX': SUBJECT_PREFIX,
-        'start': start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        'end': end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'start': start_time_local.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        'end': end_time_local.strftime("%Y-%m-%d %H:%M:%S %Z"),
         'ban_count': str(len(ban_ips)),
         'unban_count': str(len(unban_ips)),
         'ban_ips': ban_list,
@@ -657,18 +663,25 @@ def generate_report_html(ban_ips: List[str], unban_ips: List[str],
         'TOP_N': str(TOP_N),
         'abuseipdb_section': abuseipdb_section
     }
-    
-    # 使用统一的变量替换函数
     return replace_template_variables(template, variables)
 
 def generate_status_html(status_info: Dict, start_time: datetime, end_time: datetime) -> str:
-    """生成状态报告HTML"""
-    
+    """生成状态报告HTML（格式化时带时区信息）"""
+
+    # 获取用户配置的时区
+    tz_str = os.getenv('TZ', 'UTC')
+    try:
+        local_tz = ZoneInfo(tz_str)
+    except Exception:
+        local_tz = timezone.utc
+
+    # UTC转换为本地时区
+    start_time_local = start_time.astimezone(local_tz)
+    end_time_local = end_time.astimezone(local_tz)
+
     # 尝试加载模板
     template = load_template('status-template.html')
-    
     if not template:
-        # 使用备用模板
         print("[WARN] 使用备用status模板")
         template = """
         <!DOCTYPE html>
@@ -700,18 +713,17 @@ def generate_status_html(status_info: Dict, start_time: datetime, end_time: date
         </body>
         </html>
         """
-    
-    # 准备变量字典
+
     variables = {
         'SUBJECT_PREFIX': SUBJECT_PREFIX,
-        'start': start_time.strftime("%Y-%m-%d %H:%M:%S"),
-        'end': end_time.strftime("%Y-%m-%d %H:%M:%S"),
+        'start': start_time_local.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        'end': end_time_local.strftime("%Y-%m-%d %H:%M:%S %Z"),
         'status_type': status_info.get('status_message', ''),
         'log_file_status': status_info.get('log_file_status', ''),
         'status_detail': status_info.get('status_detail', '')
     }
-    
     return replace_template_variables(template, variables)
+
 
 def send_email_smtp(subject: str, html_body: str):
     """通过SMTP发送邮件"""

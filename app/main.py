@@ -24,6 +24,11 @@ MAIL_TO = [x.strip() for x in os.getenv("MAIL_TO", "").split(",") if x.strip()]
 SUBJECT_PREFIX = os.getenv("SUBJECT_PREFIX", "[Fail2Ban]")
 TOP_N = int(os.getenv("TOP_N", "5"))
 
+# Email retry configuration
+EMAIL_RETRY_ENABLED = os.getenv("EMAIL_RETRY", "false").lower() == "true"
+EMAIL_RETRY_INTERVALS = [300, 600, 3600, 10800]  # 5分钟、10分钟、1小时、3小时（秒）
+EMAIL_RETRY_CACHE_PATH = os.getenv("EMAIL_RETRY_CACHE_PATH", "/tmp/email_retry_queue.pkl")
+
 # AbuseIPDB config
 ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
 
@@ -54,6 +59,90 @@ BAN_RE = re.compile(r"Ban\s+([^\s]+)")
 UNBAN_RE = re.compile(r"Unban\s+([^\s]+)")
 FOUND_RE = re.compile(r"Found\b")
 INTERVAL_RE = re.compile(r"^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$")
+
+class EmailRetryQueue:
+    """邮件重试队列管理类"""
+    
+    def __init__(self, cache_path: str):
+        self.cache_path = cache_path
+        self.queue = self._load_queue()
+    
+    def _load_queue(self) -> List[Dict]:
+        """从缓存文件加载重试队列"""
+        try:
+            if os.path.exists(self.cache_path):
+                with open(self.cache_path, 'rb') as f:
+                    return pickle.load(f)
+        except Exception as e:
+            print(f"[WARN] 加载邮件重试队列失败: {e}")
+        return []
+    
+    def _save_queue(self):
+        """保存重试队列到缓存文件"""
+        try:
+            with open(self.cache_path, 'wb') as f:
+                pickle.dump(self.queue, f)
+        except Exception as e:
+            print(f"[WARN] 保存邮件重试队列失败: {e}")
+    
+    def add_email(self, subject: str, html_body: str):
+        """添加邮件到重试队列"""
+        email_task = {
+            'subject': subject,
+            'html_body': html_body,
+            'retry_count': 0,
+            'next_retry_time': datetime.now(timezone.utc) + timedelta(seconds=EMAIL_RETRY_INTERVALS[0]),
+            'created_at': datetime.now(timezone.utc)
+        }
+        self.queue.append(email_task)
+        self._save_queue()
+        print(f"[INFO] 邮件已加入重试队列: {subject}")
+    
+    def process_retry_queue(self):
+        """处理重试队列中的邮件"""
+        if not self.queue:
+            return
+        
+        current_time = datetime.now(timezone.utc)
+        remaining_queue = []
+        
+        for email_task in self.queue:
+            # 检查是否到达重试时间
+            if current_time >= email_task['next_retry_time']:
+                print(f"[INFO] 重试发送邮件 (第{email_task['retry_count'] + 1}次): {email_task['subject']}")
+                
+                try:
+                    # 尝试发送邮件
+                    if MAIL_PROVIDER == "resend":
+                        send_email_resend(email_task['subject'], email_task['html_body'])
+                    else:
+                        send_email_smtp(email_task['subject'], email_task['html_body'])
+                    
+                    print(f"[INFO] 邮件重试发送成功: {email_task['subject']}")
+                    # 发送成功，不再加入队列
+                    
+                except Exception as e:
+                    print(f"[ERROR] 邮件重试发送失败 (第{email_task['retry_count'] + 1}次): {e}")
+                    
+                    # 增加重试计数
+                    email_task['retry_count'] += 1
+                    
+                    # 检查是否还有重试机会
+                    if email_task['retry_count'] < len(EMAIL_RETRY_INTERVALS):
+                        # 计算下次重试时间
+                        email_task['next_retry_time'] = current_time + timedelta(
+                            seconds=EMAIL_RETRY_INTERVALS[email_task['retry_count']]
+                        )
+                        remaining_queue.append(email_task)
+                        print(f"[INFO] 将在 {EMAIL_RETRY_INTERVALS[email_task['retry_count']]} 秒后重试")
+                    else:
+                        print(f"[ERROR] 邮件发送失败，已达到最大重试次数: {email_task['subject']}")
+            else:
+                # 未到重试时间，保留在队列中
+                remaining_queue.append(email_task)
+        
+        self.queue = remaining_queue
+        self._save_queue()
 
 def check_abuseipdb_quota(api_key: str) -> int:
     """检查 AbuseIPDB API 的剩余查询额度"""
@@ -298,27 +387,61 @@ def parse_interval(interval_str: str) -> int:
     """解析时间间隔字符串，返回秒数"""
     match = INTERVAL_RE.match(interval_str)
     if not match:
-        raise ValueError(f"Invalid interval format: {interval_str}")
+        raise ValueError(f"无效的时间间隔格式: {interval_str}")
     
     hours = int(match.group(1) or 0)
     minutes = int(match.group(2) or 0)
     seconds = int(match.group(3) or 0)
     
-    return hours * 3600 + minutes * 60 + seconds
+    total_seconds = hours * 3600 + minutes * 60 + seconds
+    
+    if total_seconds == 0:
+        raise ValueError("时间间隔不能为0")
+    
+    return total_seconds
+
+def load_template(template_name: str) -> str | None:
+    """加载HTML模板文件"""
+    try:
+        # 尝试从多个可能的路径加载
+        possible_paths = [
+            os.path.join(os.path.dirname(__file__), template_name),
+            os.path.join("/app", template_name),
+            template_name
+        ]
+        
+        for path in possible_paths:
+            if os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    return f.read()
+        
+        print(f"[WARN] 模板文件未找到: {template_name}")
+        return None
+    except Exception as e:
+        print(f"[ERROR] 加载模板文件失败: {e}")
+        return None
+
+def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
+    """替换模板中的变量"""
+    result = template
+    for key, value in variables.items():
+        placeholder = f"${key}"
+        result = result.replace(placeholder, str(value))
+    return result
 
 def determine_status_type(ban_count: int, unban_count: int, found_count: int, 
                          log_status: Dict) -> Dict:
     """
-    根据事件数量和日志状态确定报告类型
+    确定报告类型
     返回：
     {
-        'report_type': 'normal' | 'status_normal' | 'status_error',
+        'report_type': str,  # 'normal', 'status_normal', 'status_error'
         'status_message': str,
         'log_file_status': str,
         'status_detail': str
     }
     """
-    # 如果有任何事件，使用正常报告
+    # 如果有任何事件，返回正常报告
     if ban_count > 0 or unban_count > 0 or found_count > 0:
         return {
             'report_type': 'normal',
@@ -327,77 +450,40 @@ def determine_status_type(ban_count: int, unban_count: int, found_count: int,
             'status_detail': ''
         }
     
-    # 无事件时，检查日志文件状态
+    # 没有事件，检查日志文件状态
     if log_status['has_new_entries']:
-        # 有新日志条目但无匹配事件
+        # 日志文件有新条目，但没有Ban/Unban/Found事件
         return {
             'report_type': 'status_normal',
-            'status_message': '服务状态正常',
-            'log_file_status': '日志文件正常',
-            'status_detail': f'没有发现新的拦截内容（检查了 {log_status["total_lines"]} 条日志记录）'
+            'status_message': '服务运行正常，无新的安全事件',
+            'log_file_status': '日志文件状态: 正常更新',
+            'status_detail': f'在此周期内，日志文件共有 {log_status["total_lines"]} 条新记录，但未检测到任何 Ban、Unban 或失败尝试事件。这表明 Fail2ban 服务正在正常运行，只是没有触发任何封禁操作。'
         }
     else:
-        # 无新日志条目
+        # 日志文件没有新条目
+        last_time_str = "未知"
+        if log_status['last_entry_time']:
+            last_time_str = log_status['last_entry_time'].strftime("%Y-%m-%d %H:%M:%S")
+        
         return {
             'report_type': 'status_error',
-            'status_message': '服务状态异常',
-            'log_file_status': '日志文件没有新内容',
-            'status_detail': '请检查容器访问日志文件fail2ban.log的相关配置'
+            'status_message': '警告: 日志文件无新内容',
+            'log_file_status': '日志文件状态: 无新记录',
+            'status_detail': f'在此周期内，日志文件没有任何新记录。最后一条日志的时间为: {last_time_str}。这可能表明 Fail2ban 服务未在运行，或者日志文件挂载存在问题。请检查 Fail2ban 服务状态和日志文件路径配置。'
         }
 
-def load_template(template_name: str) -> str:
-    """
-    加载模板文件，支持多个路径尝试
-    """
-    # 定义可能的模板路径（按优先级排序）
-    possible_paths = [
-        f'/app/{template_name}',  # Docker容器内的标准路径
-        f'./{template_name}',     # 当前目录
-        f'/home/ubuntu/fail2ban-reporter/app/{template_name}',  # 测试环境路径
-        f'/home/ubuntu/{template_name}',  # 测试环境路径
-        template_name  # 相对路径
-    ]
-    
-    for path in possible_paths:
-        try:
-            if os.path.exists(path):
-                with open(path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    print(f"[INFO] 成功加载模板: {path}")
-                    return content
-        except Exception as e:
-            print(f"[WARN] 无法读取模板 {path}: {e}")
-            continue
-    
-    # 如果所有路径都失败，返回None
-    print(f"[ERROR] 无法找到模板文件: {template_name}")
-    return None
-
-def replace_template_variables(template: str, variables: Dict[str, str]) -> str:
-    """
-    统一的变量替换函数，所有模板都使用$格式
-    """
-    html = template
-    for var_name, value in variables.items():
-        # 确保变量名以$开头
-        if not var_name.startswith('$'):
-            var_name = f'${var_name}'
-        html = html.replace(var_name, value)
-    
-    return html
-
 def format_abuseipdb_reports_html(abuseipdb_reports: Dict) -> str:
-    """格式化 AbuseIPDB 报告为 HTML 表格 - 完整版本（包含所有字段）"""
+    """格式化 AbuseIPDB 报告为 HTML"""
     if not abuseipdb_reports:
         return ""
     
-    # 使用与原模板完全一致的样式结构
-    html = '''<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:1.8rem; background-color:#fafafa; border-radius:1.1rem;">
+    # 使用与原模板一致的结构
+    html = '''
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                   <tr>
-                    <td style="padding:1rem; font-size:0.9rem; line-height:1.3rem; color:#565656;"><strong style="font-size:1.1rem; line-height:2.5rem; color:#000000;">IP信誉报告</strong><br><span style="color:#aaaaaa; margin-top:0.6rem; margin-bottom:0.6rem; display:block;">
-'''
+                    <td style="padding: 20px 0 0 0;">
+                      <span style="color:#000000; font-size:1.2rem; font-weight:bold;">AbuseIPDB 查询结果</span><br><br><span style="color:#565656;">'''
     
-    # 为每个IP生成完整的报告信息
     for ip, report in abuseipdb_reports.items():
         # 提取所有字段信息
         confidence_score = report.get('abuseConfidenceScore', 0)
@@ -599,12 +685,11 @@ def generate_status_html(status_info: Dict, start_time: datetime, end_time: date
         'SUBJECT_PREFIX': SUBJECT_PREFIX,
         'start': start_time.strftime("%Y-%m-%d %H:%M:%S"),
         'end': end_time.strftime("%Y-%m-%d %H:%M:%S"),
-        'status_type': status_info['status_message'],
-        'log_file_status': status_info['log_file_status'],
-        'status_detail': status_info['status_detail']
+        'status_type': status_info.get('status_message', ''),
+        'log_file_status': status_info.get('log_file_status', ''),
+        'status_detail': status_info.get('status_detail', '')
     }
     
-    # 使用统一的变量替换函数
     return replace_template_variables(template, variables)
 
 def send_email_smtp(subject: str, html_body: str):
@@ -646,7 +731,7 @@ def send_email_resend(subject: str, html_body: str):
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
 
-def send_email(subject: str, html_body: str):
+def send_email(subject: str, html_body: str, retry_queue: EmailRetryQueue = None):
     """发送邮件"""
     try:
         if MAIL_PROVIDER == "resend":
@@ -656,6 +741,10 @@ def send_email(subject: str, html_body: str):
         print(f"[INFO] 邮件发送成功: {subject}")
     except Exception as e:
         print(f"[ERROR] 邮件发送失败: {e}")
+        
+        # 如果启用了重试机制且提供了重试队列，将邮件加入队列
+        if EMAIL_RETRY_ENABLED and retry_queue is not None:
+            retry_queue.add_email(subject, html_body)
 
 def main():
     """主函数"""
@@ -665,6 +754,10 @@ def main():
     print(f"[INFO] 收集间隔: {COLLECT_INTERVAL}秒")
     print(f"[INFO] 邮件提供商: {MAIL_PROVIDER}")
     print(f"[INFO] 收件人: {', '.join(MAIL_TO)}")
+    print(f"[INFO] 邮件重试: {'启用' if EMAIL_RETRY_ENABLED else '禁用'}")
+    
+    if EMAIL_RETRY_ENABLED:
+        print(f"[INFO] 重试间隔: {EMAIL_RETRY_INTERVALS} 秒")
     
     if ABUSEIPDB_API_KEY:
         print(f"[INFO] AbuseIPDB API 已配置")
@@ -682,9 +775,18 @@ def main():
     # 初始化数据收集器
     collector = DataCollector(DATA_CACHE_PATH)
     
+    # 初始化邮件重试队列
+    retry_queue = None
+    if EMAIL_RETRY_ENABLED:
+        retry_queue = EmailRetryQueue(EMAIL_RETRY_CACHE_PATH)
+    
     # 主循环
     while True:
         try:
+            # 处理邮件重试队列
+            if EMAIL_RETRY_ENABLED and retry_queue:
+                retry_queue.process_retry_queue()
+            
             # 收集数据
             collector.collect_data(LOG_PATH)
             
@@ -747,7 +849,7 @@ def main():
                     subject = f"{SUBJECT_PREFIX} 状态异常 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
                     print(f"[INFO] 生成状态异常报告: 无新日志条目")
             
-            send_email(subject, html_body)
+            send_email(subject, html_body, retry_queue)
             
             # 如果 AbuseIPDB 额度不足，发送额外的通知邮件
             if abuseipdb_quota_insufficient:
@@ -759,7 +861,7 @@ def main():
                 }
                 quota_html_body = generate_status_html(quota_status_info, start_time, end_time)
                 quota_subject = f"{SUBJECT_PREFIX} 通知 - AbuseIPDB 额度不足 - {end_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                send_email(quota_subject, quota_html_body)
+                send_email(quota_subject, quota_html_body, retry_queue)
             
             # 清理过期事件（保留最近7天的数据）
             cutoff_time = end_time - timedelta(days=7)
@@ -777,3 +879,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

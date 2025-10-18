@@ -62,6 +62,7 @@ services:
     restart: unless-stopped
     volumes:
       - /var/log:/fail2banTemp:ro
+      - ./email_retry_queue:/tmp:rw  # 持久化邮件重试队列
     environment:
       # --- 核心配置 ---
       LOG_PATH: /fail2banTemp/fail2ban.log
@@ -88,6 +89,9 @@ services:
       # --- 可选功能 ---
       ABUSEIPDB_API_KEY: "your_abuseipdb_api_key" # 启用 AbuseIPDB 查询
       TOP_N: 10 # 在报告中显示失败尝试次数最多的 Top 10 IP
+
+      # --- 邮件重试功能 (可选) ---
+      EMAIL_RETRY: "true" # 启用邮件发送失败重试
 ```
 
 然后通过以下命令启动服务：
@@ -111,6 +115,8 @@ docker-compose up -d
 | `TOP_N` | `10` | (可选) 报告中显示“失败尝试”最多的 IP 数量，默认为 `5`。 |
 | `COLLECT_INTERVAL` | `300` | (可选) 日志收集器运行的周期（秒），用于处理日志轮转，默认为 `300`。 |
 | `DATA_CACHE_PATH` | `/tmp/fail2ban_cache.pkl` | (可选) 用于存储日志扫描进度的缓存文件路径。 |
+| `EMAIL_RETRY` | `true` / `false` | (可选) 是否启用邮件发送失败重试功能，默认为 `false`。启用后，当邮件发送失败时会自动按照固定时间间隔重试（5分钟、10分钟、1小时、3小时）。 |
+| `EMAIL_RETRY_CACHE_PATH` | `/tmp/email_retry_queue.pkl` | (可选) 邮件重试队列的缓存文件路径，默认为 `/tmp/email_retry_queue.pkl`。建议挂载此目录以确保容器重启后队列不丢失。 |
 
 ### AbuseIPDB 集成
 
@@ -149,6 +155,40 @@ docker-compose up -d
 - **状态正常报告 (Status Normal Report)**: 当周期内没有任何事件，但日志文件仍在正常更新时发送。这表明 Fail2ban 服务在运行，只是没有新的封禁活动。
 
 - **状态异常报告 (Status Error Report)**: 当周期内没有任何事件，且日志文件没有新内容时发送。这可能意味着 Fail2ban 服务或日志挂载存在问题，需要检查。
+
+## 新增功能说明章节
+
+### 邮件发送重试机制
+
+为了应对临时网络波动导致的邮件发送失败（例如无法连接到 Resend API 或 SMTP 服务器），本工具提供了可选的邮件重试功能。
+
+**工作原理：**
+
+1. 当邮件发送失败时，如果启用了 `EMAIL_RETRY` 功能，邮件会被自动加入重试队列
+2. 系统会按照以下固定时间间隔自动重试发送：
+   - 第1次重试：5分钟后
+   - 第2次重试：10分钟后
+   - 第3次重试：1小时后
+   - 第4次重试：3小时后
+3. 一旦邮件发送成功，立即从队列中移除，不再继续重试
+4. 如果所有重试均失败，系统会记录错误日志并放弃该邮件
+
+**使用建议：**
+
+- 建议挂载 `/tmp` 目录（如 `./email_retry_queue:/tmp:rw`）以确保容器重启后重试队列不丢失
+- 重试功能对 SMTP 和 Resend 两种邮件发送方式均有效
+- 如果不需要此功能，保持 `EMAIL_RETRY` 为默认值 `false` 即可
+
+**日志示例：**
+
+```
+[ERROR] 邮件发送失败: HTTPSConnectionPool(host='api.resend.com', port=443): Max retries exceeded...
+[INFO] 邮件已加入重试队列: [Fail2Ban] 报告 - 2025-10-18 12:00:00
+[INFO] 重试发送邮件 (第1次): [Fail2Ban] 报告 - 2025-10-18 12:00:00
+[INFO] 邮件重试发送成功: [Fail2Ban] 报告 - 2025-10-18 12:00:00
+```
+
+
 
 ## 许可证
 

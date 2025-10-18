@@ -5,6 +5,7 @@ import smtplib
 import ssl
 import json
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import List, Tuple, Dict, Counter
@@ -229,8 +230,28 @@ class DataCollector:
             print(f"[WARN] 保存缓存失败: {e}")
     
     def _parse_timestamp(self, ts_str: str) -> datetime:
-        """解析时间戳"""
-        return datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        '''解析时间戳，使用环境变量指定的时区'''
+        # 解析时间字符串（不带时区信息）
+        naive_dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+    
+    # 获取环境变量中的时区设置
+        tz_str = os.getenv('TZ', 'UTC')
+    
+        try:
+        # 创建时区对象
+            local_tz = ZoneInfo(tz_str)
+        except Exception as e:
+        # 如果时区无效，回退到 UTC
+            print(f"[WARN] 无法解析时区 '{tz_str}': {e}，使用 UTC")
+            local_tz = timezone.utc
+    
+    # 将日志时间戳解释为本地时区的时间
+        local_dt = naive_dt.replace(tzinfo=local_tz)
+    
+    # 转换为 UTC 时间用于统一比较
+        utc_dt = local_dt.astimezone(timezone.utc)
+    
+        return utc_dt
     
     def _get_file_inode(self, filepath: str) -> int:
         """获取文件inode"""
